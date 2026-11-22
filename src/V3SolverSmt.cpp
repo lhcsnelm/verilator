@@ -3611,8 +3611,9 @@ class SolverSmtLowering final : public V3SolverLowering {
     }
 
     // Weighted chain while the dist value can still be freshly drawn, membership
-    // once it is frozen; membership only when it can never be re-drawn.
-    AstNodeConstraintItem* gateFrozenDist(AstNodeConstraintItem* chainp, AstDist* distp,
+    // once it is frozen; membership only when it can never be re-drawn.  Separate
+    // items, as an if of both would be one hard constraint, though the chain is soft.
+    AstNodeConstraintItem* gateFrozenDist(AstConstraintExpr* chainp, AstDist* distp,
                                           const std::vector<DistBucket>& buckets,
                                           AstVar* randModeVarp) {
         FileLine* const fl = distp->fileline();
@@ -3624,7 +3625,19 @@ class SolverSmtLowering final : public V3SolverLowering {
             VL_DO_DANGLING(pushDeletep(chainp), chainp);
             return buildFrozenMembership(distp, buckets);
         }
-        return new AstConstraintIf{fl, gatep, chainp, buildFrozenMembership(distp, buckets)};
+        if (gatep->width() > 1) {  // A mode word
+            const V3Number zero{fl, gatep->width(), 0};
+            gatep = new AstNeq{fl, gatep, new AstConst{fl, zero}};
+        }
+        AstNodeExpr* const notGatep = new AstLogNot{fl, gatep->cloneTreePure(false)};
+        AstLogIf* const softp = new AstLogIf{fl, gatep, chainp->exprp()->unlinkFrBack()};
+        softp->dtypeSetBit();
+        softp->user1(true);
+        chainp->exprp(softp);
+        AstNodeConstraintItem* const itemsp = chainp;
+        itemsp->addNext(new AstConstraintIf{fl, notGatep, buildFrozenMembership(distp, buckets),
+                                            nullptr});
+        return itemsp;
     }
 
     AstNodeExpr* newUniformRangePick(AstDist* distp, const AstInsideRange* irp) {
@@ -3832,10 +3845,9 @@ class SolverSmtLowering final : public V3SolverLowering {
                 cumSums.push_back(runningSump->cloneTreePure(true));
             }
 
-            AstNodeConstraintItem* chainp
-                = buildWeightedBucketChain(distp, buckets, bucketVarp, cumSums);
-
-            chainp = gateFrozenDist(chainp, distp, buckets, randModeVarp);
+            AstNodeConstraintItem* const chainp = gateFrozenDist(
+                buildWeightedBucketChain(distp, buckets, bucketVarp, cumSums), distp, buckets,
+                randModeVarp);
 
             constrExprp->replaceWith(chainp);
             VL_DO_DANGLING(pushDeletep(constrExprp), constrExprp);
