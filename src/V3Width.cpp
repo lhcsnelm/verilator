@@ -4704,7 +4704,14 @@ class WidthVisitor final : public VNVisitor {
             // Unsupported in parameters
             AstNodeExpr* const inewp = new AstCMethodHard{nodep->fileline(), itemp->unlinkFrBack(),
                                                           VCMethod::ARRAY_INSIDE, exprp};
-            iterateCheckTyped(nodep, "inside value", exprp, itemDtp->subDTypep(), BOTH);
+            // The value is compared with the elements, so of another enum type than theirs is
+            // as of their base type (IEEE 1800-2023 11.4.13)
+            AstNodeDType* elemDtp = itemDtp->subDTypep();
+            if (const AstEnumDType* const enumDtp
+                = VN_CAST(elemDtp->skipRefToEnump(), EnumDType)) {
+                elemDtp = enumDtp->subDTypep();
+            }
+            iterateCheckTyped(nodep, "inside value", exprp, elemDtp, BOTH);
             inewp->dtypeSetBit();
             inewp->didWidth(true);
             return inewp;
@@ -11752,6 +11759,7 @@ class WidthVisitor final : public VNVisitor {
         // Ideally we would have a fast algorithm when a number is
         // of small width and complete and so can use an array, and
         // a map for when the value is many bits and sparse.
+        UASSERT_OBJ(!adtypep->isWide(), errNodep, "Wide enum values select by ordinal");
         uint64_t maxval = 0;
         for (const AstEnumItem* const itemp : adtypep->itemspList()) {
             const AstConst* const vconstp = VN_CAST(itemp->valuep(), Const);
@@ -11759,12 +11767,23 @@ class WidthVisitor final : public VNVisitor {
             if (!vconstp->num().isAnyXZ() && vconstp->toUQuad() >= maxval)
                 maxval = vconstp->toUQuad();
         }
-        if (adtypep->itemsp()->width() > 64) {
-            errNodep->v3warn(E_UNSUPPORTED,
-                             "Unsupported: enum next/prev method on enum with > 64 bits");
-            return 64;
-        }
         return maxval;
+    }
+    // The ordinal of a wide enum's value (nodep), 1 for its first item, 0 for no item, in the
+    // tables of enumVarRefp; sets ordinalr to the number of items
+    static AstNodeExpr* newEnumOrdinalp(AstNodeExpr* nodep, const AstEnumDType* adtypep,
+                                        uint32_t& ordinalr) {
+        AstNodeExpr* indexp = new AstConst{nodep->fileline(), 0};
+        ordinalr = 0;
+        for (const AstEnumItem* const itemp : adtypep->itemspList()) {
+            const AstConst* const constp = VN_AS(itemp->valuep(), Const);
+            if (constp->num().isAnyXZ()) continue;
+            indexp = new AstCond{nodep->fileline(),
+                                 new AstEq{nodep->fileline(), nodep->cloneTree(false),
+                                           itemp->valuep()->cloneTree(false)},
+                                 new AstConst{nodep->fileline(), ++ordinalr}, indexp};
+        }
+        return indexp;
     }
     AstVarRef* enumVarRefp(AstEnumDType* const nodep, VAttrType attrType, bool assoc,
                            uint32_t msbdim, uint32_t step = 0) {
@@ -11891,58 +11910,51 @@ class WidthVisitor final : public VNVisitor {
                 return newp;
             }
         }
-        if (attrType == VAttrType::ENUM_NAME && !nodep->isPure() && (m_modep || m_ftaskp)) {
+        if ((attrType == VAttrType::ENUM_NAME || adtypep->isWide()) && !nodep->isPure()
+            && (m_modep || m_ftaskp)) {
             AstExprStmt* const capturep = newEnumCapture(nodep, adtypep);
             AstNodeExpr* const valuep = capturep->resultp()->unlinkFrBack();
-            capturep->resultp(enumSelect(valuep, adtypep, attrType));
-            capturep->dtypeSetString();
+            AstNodeExpr* const selp = enumSelect(valuep, adtypep, attrType, step);
+            capturep->resultp(selp);
+            capturep->dtypeFrom(selp);
             return capturep;
         }
-        if (attrType == VAttrType::ENUM_NAME && adtypep->isWide()) {
-            // Wide values select an ordinal in the shared name table.
-            AstNodeExpr* indexp = new AstConst{nodep->fileline(), 0};
-            uint32_t ordinal = 0;
-            for (const AstEnumItem* const itemp : adtypep->itemspList()) {
-                const AstConst* const constp = VN_AS(itemp->valuep(), Const);
-                if (constp->num().isAnyXZ()) continue;
-                indexp = new AstCond{nodep->fileline(),
-                                     new AstEq{nodep->fileline(), nodep->cloneTree(false),
-                                               itemp->valuep()->cloneTree(false)},
-                                     new AstConst{nodep->fileline(), ++ordinal}, indexp};
-            }
-            AstVarRef* const tabRefp = enumVarRefp(adtypep, attrType, false, ordinal);
-            AstNodeExpr* const newp = new AstArraySel{nodep->fileline(), tabRefp, indexp};
-            newp->dtypeSetString();
-            VL_DO_DANGLING(pushDeletep(nodep), nodep);
-            return newp;
-        }
-        const uint64_t msbdim = enumMaxValue(nodep, adtypep);
-        const bool assoc = msbdim > ENUM_LOOKUP_BITS;
         AstNodeExpr* newp;
-        if (assoc) {
-            AstVarRef* const tabRefp = enumVarRefp(adtypep, attrType, true, 0, step);
-            newp = new AstAssocSel{nodep->fileline(), tabRefp, nodep};
+        if (adtypep->isWide()) {
+            // Wide values select an ordinal in shared tables
+            uint32_t ordinal;
+            AstNodeExpr* const indexp = newEnumOrdinalp(nodep, adtypep, ordinal);
+            newp = new AstArraySel{nodep->fileline(),
+                                   enumVarRefp(adtypep, attrType, false, ordinal, step), indexp};
+            VL_DO_DANGLING(pushDeletep(nodep), nodep);
         } else {
-            const int selwidth = V3Number::log2b(msbdim) + 1;  // Width to address a bit
-            AstVarRef* const tabRefp
-                = enumVarRefp(adtypep, attrType, false, (1ULL << selwidth) - 1, step);
-            AstNodeExpr* const boundp
-                = attrType == VAttrType::ENUM_NAME
-                          && (adtypep->width() > selwidth || msbdim != (1ULL << selwidth) - 1)
-                      ? new AstGt{nodep->fileline(), nodep->cloneTree(false),
-                                  new AstConst{nodep->fileline(),
-                                               V3Number{nodep, adtypep->width(),
-                                                        static_cast<uint32_t>(msbdim)}}}
-                      : nullptr;
-            newp = new AstArraySel{
-                nodep->fileline(), tabRefp,
-                // Select in case widths are off due to msblen!=width
-                // We return "random" values if outside the range, which is fine
-                // as next/previous on illegal values just need something good out
-                new AstSel{nodep->fileline(), nodep, 0, selwidth}};
-            if (boundp) {
-                newp = new AstCond{nodep->fileline(), boundp,
-                                   new AstConst{nodep->fileline(), AstConst::String{}, ""}, newp};
+            const uint64_t msbdim = enumMaxValue(nodep, adtypep);
+            if (msbdim > ENUM_LOOKUP_BITS) {
+                AstVarRef* const tabRefp = enumVarRefp(adtypep, attrType, true, 0, step);
+                newp = new AstAssocSel{nodep->fileline(), tabRefp, nodep};
+            } else {
+                const int selwidth = V3Number::log2b(msbdim) + 1;  // Width to address a bit
+                AstVarRef* const tabRefp
+                    = enumVarRefp(adtypep, attrType, false, (1ULL << selwidth) - 1, step);
+                AstNodeExpr* const boundp
+                    = attrType == VAttrType::ENUM_NAME
+                              && (adtypep->width() > selwidth || msbdim != (1ULL << selwidth) - 1)
+                          ? new AstGt{nodep->fileline(), nodep->cloneTree(false),
+                                      new AstConst{nodep->fileline(),
+                                                   V3Number{nodep, adtypep->width(),
+                                                            static_cast<uint32_t>(msbdim)}}}
+                          : nullptr;
+                newp = new AstArraySel{
+                    nodep->fileline(), tabRefp,
+                    // Select in case widths are off due to msblen!=width
+                    // We return "random" values if outside the range, which is fine
+                    // as next/previous on illegal values just need something good out
+                    new AstSel{nodep->fileline(), nodep, 0, selwidth}};
+                if (boundp) {
+                    newp = new AstCond{nodep->fileline(), boundp,
+                                       new AstConst{nodep->fileline(), AstConst::String{}, ""},
+                                       newp};
+                }
             }
         }
         if (attrType == VAttrType::ENUM_NAME) {
@@ -11955,6 +11967,11 @@ class WidthVisitor final : public VNVisitor {
         return newp;
     }
     AstNodeExpr* enumTestValid(AstNodeExpr* valp, AstEnumDType* enumDtp) {
+        if (enumDtp->isWide()) {
+            uint32_t ordinal;
+            return new AstNeq{valp->fileline(), newEnumOrdinalp(valp, enumDtp, ordinal),
+                              new AstConst{valp->fileline(), 0}};
+        }
         const uint64_t maxval = enumMaxValue(valp, enumDtp);
         const bool assoc = maxval > ENUM_LOOKUP_BITS;
         AstNodeExpr* testp = nullptr;

@@ -38,11 +38,4 @@
 %Warning-USERFATAL: "Fatal Error"
                     ... For warning description see https://verilator.org/warn/USERFATAL?v=latest
                     ... Use "/* verilator lint_off USERFATAL */" and lint_on around source to disable this message.
-%Error: t/t_func_const_bad.v:51:23: Expecting expression to be constant, but can't determine constant for FUNCREF 'f_bad_fatal'
-                                  : ... note: In instance 't'
-        t/t_func_const_bad.v:56:5: ... Location of non-constant STOP: $stop executed during function constification; maybe indicates assertion firing
-        t/t_func_const_bad.v:51:23: ... Called from 'f_bad_fatal()' with parameters:
-           a = ?32?h3
-   51 |   localparam BFATAL = f_bad_fatal(3);
-      |                       ^~~~~~~~~~~
 %Error: Exiting due to

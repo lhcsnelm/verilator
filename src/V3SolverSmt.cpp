@@ -278,9 +278,11 @@ class ConstraintExprVisitor final : public VNVisitor {
         const int width = enumDtp->width();
         std::string constraint = "(__Vbv (or";
         for (AstEnumItem* const itemp : enumDtp->itemspList()) {
-            const AstConst* const vconstp = VN_AS(itemp->valuep(), Const);
-            constraint += " (= " + smtName + " (_ bv" + cvtToStr(vconstp->toUInt()) + " "
-                          + cvtToStr(width) + "))";
+            const V3Number& num = VN_AS(itemp->valuep(), Const)->num();
+            std::string bits;  // As a literal of any width
+            bits.reserve(width);
+            for (int bit = width - 1; bit >= 0; --bit) bits += num.bitIs1(bit) ? '1' : '0';
+            constraint += " (= " + smtName + " #b" + bits + ")";
         }
         constraint += "))";
         AstCMethodHard* const callp = new AstCMethodHard{

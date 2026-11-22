@@ -1195,9 +1195,10 @@ uint64_t V3Number::toUQuad() const VL_MT_SAFE {
     // We allow wide numbers that represent values <= 64 bits
     if (isDouble()) return static_cast<uint64_t>(toDouble());
     for (int i = 2; i < words(); ++i) {
-        if (m_data.num()[i].m_value) {
-            v3error("Value too wide for 64-bits expected in this context " << *this);
-            break;
+        if (VL_UNCOVERABLE(m_data.num()[i].m_value)) {
+            v3error("Value too wide for 64-bits expected in this context "  // LCOV_EXCL_LINE
+                    << *this);
+            break;  // LCOV_EXCL_LINE
         }
     }
     if (width() <= 32) return (static_cast<uint64_t>(toUInt()));

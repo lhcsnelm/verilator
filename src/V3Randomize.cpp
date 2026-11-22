@@ -2567,10 +2567,6 @@ class RandomizeVisitor final : public VNVisitor {
             AstNodeStmt* basicStmtsp = nullptr;
             for (const AstArg* const argp : nodep->argspList()) {
                 AstNodeExpr* const exprp = argp->exprp();
-                AstCMethodHard* const basicMethodp = new AstCMethodHard{
-                    nodep->fileline(),
-                    new AstVarRef{nodep->fileline(), stdrandp, VAccess::READWRITE},
-                    VCMethod::RANDOMIZER_BASIC_STD_RANDOMIZATION};
                 AstVar* const refvarp
                     = new AstVar{exprp->fileline(), VVarType::MEMBER,
                                  "__Varg"s + std::to_string(++argn), exprp->dtypep()};
@@ -2609,6 +2605,37 @@ class RandomizeVisitor final : public VNVisitor {
                                       new AstVarRef{fl, prevVarp, VAccess::READ}});
                 }
 
+                // A variable of an enumeration type takes one of its values (IEEE 1800-2023 18.4)
+                if (AstEnumDType* const enumDtp
+                    = VN_CAST(exprp->dtypep()->skipRefToEnump(), EnumDType)) {
+                    FileLine* const fl = exprp->fileline();
+                    AstNodeExpr* const randp = new AstRand{fl, nullptr, false};
+                    randp->dtypeSetUInt32();
+                    AstNodeExpr* const indexp = new AstModDiv{
+                        fl, randp, new AstConst{fl, static_cast<uint32_t>(enumDtp->itemCount())}};
+                    indexp->dtypeSetUInt32();
+                    // Drawn once, as a wide value is assigned word by word
+                    AstVar* const indexVarp
+                        = new AstVar{fl, VVarType::BLOCKTEMP, "__Vindex"s + std::to_string(argn),
+                                     indexp->dtypep()};
+                    indexVarp->funcLocal(true);
+                    indexVarp->lifetime(VLifetime::AUTOMATIC_EXPLICIT);
+                    randomizeFuncp->addDeclsp(indexVarp);
+                    basicStmtsp = AstNode::addNextNull(
+                        basicStmtsp,
+                        new AstAssign{fl, new AstVarRef{fl, indexVarp, VAccess::WRITE}, indexp});
+                    basicStmtsp = AstNode::addNextNull(
+                        basicStmtsp,
+                        new AstAssign{fl, new AstVarRef{fl, refvarp, VAccess::WRITE},
+                                      new AstArraySel{fl, enumValueTabRefp(enumDtp),
+                                                      new AstVarRef{fl, indexVarp,
+                                                                    VAccess::READ}}});
+                    continue;
+                }
+                AstCMethodHard* const basicMethodp = new AstCMethodHard{
+                    nodep->fileline(),
+                    new AstVarRef{nodep->fileline(), stdrandp, VAccess::READWRITE},
+                    VCMethod::RANDOMIZER_BASIC_STD_RANDOMIZATION};
                 const size_t width = exprp->width();
                 basicMethodp->addPinsp(
                     new AstVarRef{exprp->fileline(), refvarp, VAccess::READWRITE});

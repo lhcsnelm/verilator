@@ -1700,8 +1700,10 @@ private:
 
     void visit(AstStop* nodep) override {
         if (jumpingOver()) return;
-        if (m_params) {  // This message seems better than an obscure $stop
-            // The spec says $stop is just ignored, it seems evil to ignore assertions
+        if (m_params) {
+            // The spec has a constant function ignore $stop and $fatal.  A $fatal has reported
+            // its message as USERFATAL, but a $stop would be silent, so is not ignored.
+            if (nodep->isFatal()) return;
             clearOptimizable(
                 nodep,
                 "$stop executed during function constification; maybe indicates assertion firing");

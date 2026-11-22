@@ -164,6 +164,8 @@ private:
     std::unordered_set<AstVar*> m_clockedWrites;
     std::unordered_map<AstVar*, std::vector<ForceInfo*>> m_rhsDepToForces;
     std::unordered_map<AstScope*, ScopeVarCache> m_scopeVarCaches;
+    // Module storage for function-local variables read by forced expressions
+    std::unordered_map<const AstVarScope*, AstVarScope*> m_localShadows;
     bool m_doingAssign = false;  // If true, we're processing procedural continuous assign
                                  // statements instead of force statements
     ProtectedVarRefSet& m_permanentlyProtected;
@@ -557,6 +559,26 @@ public:
         }
         const auto it = cache.find(varp);
         return it != cache.end() ? it->second : nullptr;
+    }
+    // The continuous update of a forced expression runs after the function forcing it returns,
+    // so reads module storage the function copies a local variable to as it forces
+    AstVarScope* localShadowVscp(const AstVarScope* localVscp) {
+        AstVarScope*& shadowpr = m_localShadows[localVscp];
+        if (shadowpr) return shadowpr;
+        AstVar* const localp = localVscp->varp();
+        AstScope* const scopep = localVscp->scopep();
+        AstVar* const varp = new AstVar{
+            localp->fileline(), VVarType::MODULETEMP,
+            localp->name() + "__VforceLocal" + std::to_string(m_localShadows.size()), localp};
+        varp->noSubst(true);
+        scopep->modp()->addStmtsp(varp);
+        shadowpr = new AstVarScope{varp->fileline(), scopep, varp};
+        scopep->addVarsp(shadowpr);
+        return shadowpr;
+    }
+    AstVarScope* localShadowVscpIfAny(const AstVarScope* localVscp) const {
+        const auto it = m_localShadows.find(localVscp);
+        return it == m_localShadows.end() ? nullptr : it->second;
     }
     void addForceAssignment(AstVar* varp, AstVarScope* vscp, AstNodeExpr* rhsExprp,
                             AstAssignForce* forceStmtp, int rangeLsb, int rangeMsb, int padLsb,
@@ -992,6 +1014,12 @@ class ForceDiscoveryVisitor final : public VNVisitorConst {
 
         // Keep narrow rhs, VlForceVec blends unpacked-array bit-select forces at read time
         AstNodeExpr* const rhsExprp = nodep->rhsp()->cloneTreePure(false);
+        rhsExprp->foreach([&](AstVarRef* const refp) {
+            if (!refp->varp()->isFuncLocal()) return;
+            AstVarScope* const shadowp = m_state.localShadowVscp(refp->varScopep());
+            refp->varScopep(shadowp);
+            refp->varp(shadowp->varp());
+        });
 
         m_state.addForceAssignment(forcedVarp, lhsVarRefp->varScopep(), rhsExprp, nodep,
                                    rangeInfo.m_rangeLsb, rangeInfo.m_rangeMsb, rangeInfo.m_padLsb,
@@ -1119,6 +1147,15 @@ class ForceConvertVisitor final : public VNVisitor {
         UASSERT_OBJ(varInfop && varInfop->m_forceVecVscp, nodep, "Force info not set up");
 
         FileLine* const flp = nodep->fileline();
+
+        // Copy the local variables the continuous update reads (see localShadowVscp)
+        nodep->rhsp()->foreach([&](const AstVarRef* const refp) {
+            if (AstVarScope* const shadowp = m_state.localShadowVscpIfAny(refp->varScopep())) {
+                nodep->addHereThisAsNext(
+                    new AstAssign{flp, new AstVarRef{flp, shadowp, VAccess::WRITE},
+                                  new AstVarRef{flp, refp->varScopep(), VAccess::READ}});
+            }
+        });
 
         // Assign RHS shadow value immediately so force takes effect in the same timestep.
         UASSERT_OBJ(info.m_rhsVarVscp, nodep, "No RHS var for forced variable");
