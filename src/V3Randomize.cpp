@@ -946,10 +946,9 @@ class CaptureVisitor final : public VNVisitor {
             && varRefp->varp()->lifetime().isStatic())
             return CaptureMode::CAP_NO;
         if (callerIsClass && varIsFieldOfCaller) return CaptureMode::CAP_THIS;
-        // Static member of a different class: V3Width replaces AstMemberRef with a bare
-        // AstVarRef (classOrPackagep set). Capture current value as a function argument.
-        if (callerIsClass && varClassp && !varIsFieldOfCaller
-            && varRefp->varp()->lifetime().isStatic())
+        // Static variable of a package or a different class (V3Width replaces AstMemberRef
+        // with a bare AstVarRef, classOrPackagep set). Capture current value as an argument.
+        if (callerIsClass && !varIsFieldOfCaller && varRefp->varp()->lifetime().isStatic())
             return CaptureMode::CAP_VALUE;
         UASSERT_OBJ(!callerIsClass, varRefp, "Invalid reference?");
         return CaptureMode::CAP_VALUE;
@@ -1202,6 +1201,7 @@ class RandomizeVisitor final : public VNVisitor {
                 = new AstVar{modp->fileline(), VVarType::MEMBER, "stdrand",
                              modp->findBasicDType(VBasicDTypeKwd::RANDOM_STDGENERATOR)};
             stdgenp->fileline()->warnOff(V3ErrorCode::IMPURE, true);
+            stdgenp->isInternal(true);
             modp->addStmtsp(stdgenp);
             m_stdMap.emplace(modp, stdgenp);
             return stdgenp;

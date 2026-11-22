@@ -90,8 +90,9 @@ class NameVisitor final : public VNVisitorConst {
     // Add __PVT__ to names of local signals
     void visit(AstVar* nodep) override {
         // Don't iterate... Don't need temps for RANGES under the Var.
+        // Class members, not accessed by name as public signals are, may clash with methods
         rename(nodep,
-               ((!m_modp || !m_modp->isTop()) && !nodep->isSigPublic()
+               ((!m_modp || !m_modp->isTop()) && (!nodep->isSigPublic() || VN_IS(m_modp, Class))
                 && !nodep->isFuncLocal()  // Isn't exposed, and would mess up dpi import wrappers
                 && !nodep->isTemp()  // Don't bother to rename internal signals
                 // Special case, hardcoded m_process references in verilated_std.h and elsewhere

@@ -362,7 +362,7 @@ class WidthSelVisitor final : public VNVisitor {
         const FromData fromdata = fromDataForArray(nodep, fromp);
         AstNodeDType* const ddtypep = fromdata.m_dtypep;
         const VNumRange fromRange = fromdata.m_fromRange;
-        if (VN_IS(ddtypep, QueueDType)) {
+        if (VN_IS(ddtypep, QueueDType) || VN_IS(ddtypep, DynArrayDType)) {
             AstNodeExpr* const qleftp = nodep->leftp()->unlinkFrBack();
             AstNodeExpr* const qrightp = nodep->rightp()->unlinkFrBack();
             AstNodeExpr* const qleftBacknessp = selQueueBackness(qleftp);

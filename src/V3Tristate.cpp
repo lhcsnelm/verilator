@@ -449,6 +449,127 @@ public:
 };
 
 //######################################################################
+// Split each continuous assignment with unequal 0 and 1 strengths into assignments of a single
+// strength, one driving the 0 bits and one the 1 bits, as only assignments of equal strengths
+// resolve against other drivers. A highz strength drives nothing, so drops its assignment. An
+// only driver of its net is left as is unless highz, as then the strength does not matter.
+
+class TristateStrengthVisitor final : public VNVisitor {
+    // NODE STATE
+    //  AstVar::user1()     -> int.  Continuous assignments and pulls driving the variable
+    const VNUser1InUse m_inuser1;
+
+    // STATE
+    std::vector<AstAssignW*> m_unequalps;  // Assignments of unequal strengths, current module
+
+    // METHODS
+    static AstVar* drivenVarp(AstNodeExpr* lhsp) {
+        if (AstSel* const selp = VN_CAST(lhsp, Sel)) lhsp = selp->fromp();
+        const AstVarRef* const refp = VN_CAST(lhsp, VarRef);
+        return refp ? refp->varp() : nullptr;
+    }
+    static void valuesDriven(const AstNodeExpr* nodep, bool& drives0r, bool& drives1r) {
+        // Which values a constant, or condition of constants, drives on some bit
+        if (const AstCond* const condp = VN_CAST(nodep, Cond)) {
+            valuesDriven(condp->thenp(), drives0r, drives1r);
+            valuesDriven(condp->elsep(), drives0r, drives1r);
+        } else if (const AstConst* const constp = VN_CAST(nodep, Const)) {
+            for (int bit = 0; bit < constp->width(); ++bit) {
+                if (constp->num().bitIs0(bit)) drives0r = true;
+                if (constp->num().bitIs1(bit)) drives1r = true;
+            }
+        } else {
+            drives0r = true;
+            drives1r = true;
+        }
+    }
+    static AstNodeExpr* newValueDriver(AstNodeExpr* rhsp, bool value, bool onlyValue) {
+        // Expression driving 'value' on the bits of rhsp with that value, z on the others
+        if (onlyValue) return rhsp->cloneTreePure(false);
+        FileLine* const flp = rhsp->fileline();
+        if (const AstConst* const constp = VN_CAST(rhsp, Const)) {
+            V3Number num{rhsp, constp->width(), 0};
+            for (int bit = 0; bit < constp->width(); ++bit) {
+                const bool driven = value ? constp->num().bitIs1(bit) : constp->num().bitIs0(bit);
+                num.setBit(bit, driven ? (value ? '1' : '0') : 'z');
+            }
+            return new AstConst{flp, num};
+        }
+        AstNodeExpr* const enp = value ? rhsp->cloneTreePure(false)
+                                       : new AstNot{flp, rhsp->cloneTreePure(false)};
+        V3Number num{rhsp, rhsp->width(), 0};
+        if (value) num.setAllBits1();
+        AstNodeExpr* const newp = new AstBufIf1{flp, enp, new AstConst{flp, num}};
+        newp->dtypeFrom(rhsp);
+        return newp;
+    }
+    void splitAssign(AstAssignW* nodep) {
+        const VStrength s0 = nodep->strengthSpecp()->strength0();
+        const VStrength s1 = nodep->strengthSpecp()->strength1();
+        const bool highz = s0 == VStrength::HIGHZ || s1 == VStrength::HIGHZ;
+        AstVar* const varp = drivenVarp(nodep->lhsp());
+        if (!varp || (varp->user1() < 2 && !highz)) return;
+        bool drives0 = false;
+        bool drives1 = false;
+        valuesDriven(nodep->rhsp(), drives0, drives1);
+        const bool needs0 = drives0 && s0 != VStrength::HIGHZ;
+        const bool needs1 = drives1 && s1 != VStrength::HIGHZ;
+        // A tristate value is supported only when driving one value
+        const bool mixed = drives0 && drives1;
+        const bool tristate = nodep->rhsp()->exists([](const AstConst* constp) {  //
+            return constp->num().isAnyZ();
+        });
+        if (mixed && tristate) return;  // Unsupported, reported later
+        if (mixed && !VN_IS(nodep->rhsp(), Const) && !nodep->rhsp()->isPure()) return;
+        AstNodeExpr* const rhsp = nodep->rhsp();
+        AstNode* newp = nullptr;
+        FileLine* const flp = nodep->fileline();
+        const auto newAssignp = [&](AstNodeExpr* valuep) {
+            AstNode* const controlp = nodep->timingControlp();
+            return new AstAssignW{flp, nodep->lhsp()->cloneTreePure(false), valuep,
+                                  controlp ? controlp->cloneTree(false) : nullptr};
+        };
+        for (const bool value : {false, true}) {
+            if (!(value ? needs1 : needs0)) continue;
+            const VStrength strength = value ? s1 : s0;
+            AstAssignW* const assignp = newAssignp(newValueDriver(rhsp, value, !mixed));
+            assignp->strengthSpecp(new AstStrengthSpec{flp, strength, strength});
+            newp = AstNode::addNext(newp, assignp);
+        }
+        // Driving nothing, still a driver, so the net may be z
+        if (!newp) {
+            V3Number num{rhsp, rhsp->width(), 0};
+            num.setAllBitsZ();
+            newp = newAssignp(new AstConst{flp, num});
+        }
+        nodep->addNextHere(newp);
+        VL_DO_DANGLING(pushDeletep(nodep->unlinkFrBack()), nodep);
+    }
+
+    // VISITORS
+    void visit(AstNodeModule* nodep) override {
+        VL_RESTORER_CLEAR(m_unequalps);
+        iterateChildren(nodep);
+        for (AstAssignW* const assignp : m_unequalps) splitAssign(assignp);
+    }
+    void visit(AstAssignW* nodep) override {
+        if (AstVar* const varp = drivenVarp(nodep->lhsp())) varp->user1Inc();
+        AstStrengthSpec* const specp = nodep->strengthSpecp();
+        if (specp && specp->strength0() != specp->strength1()) m_unequalps.push_back(nodep);
+    }
+    void visit(AstPull* nodep) override {
+        if (AstVar* const varp = drivenVarp(nodep->lhsp())) varp->user1Inc();
+    }
+    void visit(AstNodeExpr*) override {}  // Accelerate
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }
+
+public:
+    // CONSTRUCTORS
+    explicit TristateStrengthVisitor(AstNetlist* nodep) { iterate(nodep); }
+    ~TristateStrengthVisitor() override = default;
+};
+
+//######################################################################
 
 class TristateVisitor final : public TristateBaseVisitor {
     // NODE STATE
@@ -1422,9 +1543,9 @@ class TristateVisitor final : public TristateBaseVisitor {
                 nodep->strengthSpecp()->unlinkFrBack()->deleteTree();
             }
         } else if (nodep->strengthSpecp()) {
-            nodep->v3warn(E_UNSUPPORTED,
-                          "Unsupported: Assignments with signal strength with LHS of type: "
-                              << nodep->lhsp()->prettyTypeNameQ());
+            // Strength on a select, resolve with the other drivers of the net by tristate
+            // lowering, which combines drivers by strength per bit
+            m_tgraph.setTristate(nodep);
         }
     }
 
@@ -2704,6 +2825,7 @@ public:
 
 void V3Tristate::tristateAll(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ":");
+    { TristateStrengthVisitor{nodep}; }
     { TristateVisitor{nodep}; }  // Destruct before checking
     V3Global::dumpCheckGlobalTree("tristate", 0, dumpTreeEitherLevel() >= 3);
 }

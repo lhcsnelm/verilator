@@ -11,18 +11,27 @@
 
 module t;
 
+  int checks = 0;  // Instances of mycheck
+
   // Identifiers are relative to bind target
   bind moda: t.u_a1, t.u_a2 mycheck #(.CHECK('h90)) u_check ();
+  bind modb: u_a1.u_b2, u_a2.u_b1 mycheck #(.CHECK(VAL)) u_check ();
 
   moda #(.VAL('h10)) u_a1 ();
   moda #(.VAL('h20)) u_a2 ();
+  moda #(.VAL('h30)) u_a3 ();
 
   initial begin
     `checkh(u_a1.u_check.CHECK, 'h90);
     `checkh(u_a2.u_check.CHECK, 'h90);
+    `checkh(u_a1.u_b2.u_check.CHECK, 'h12);
+    `checkh(u_a2.u_b1.u_check.CHECK, 'h21);
     $write("*-* All Finished *-*\n");
     $finish;
   end
+
+  // No instances other than those targeted
+  final `checkh(checks, 4);
 
 endmodule
 
@@ -38,4 +47,5 @@ endmodule
 
 module mycheck;
   parameter CHECK = 0;
+  initial t.checks++;
 endmodule

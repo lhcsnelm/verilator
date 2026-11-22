@@ -37,6 +37,7 @@
 #include "V3LanguageWords.h"
 #include "V3SharedTmps.h"
 #include "V3Stats.h"
+#include "V3UniqueNames.h"
 
 #include <string>
 #include <tuple>
@@ -184,6 +185,14 @@ public:
     }
     // Returns pointer to node that makes the given FTask impure
     AstNode* checkImpure(AstNodeFTask* nodep) { return getFTaskVertex(nodep)->impureNode(); }
+    // Whether all calls are from class methods, which are never inlined either
+    bool calledOnlyByMethods(AstNodeFTask* nodep) {
+        for (V3GraphEdge& edge : getFTaskVertex(nodep)->inEdges()) {
+            const TaskFTaskVertex* const callerp = edge.fromp()->cast<TaskFTaskVertex>();
+            if (!callerp || !callerp->nodep()->classMethod()) return false;
+        }
+        return true;
+    }
 
 private:
     TaskFTaskVertex* getFTaskVertex(AstNodeFTask* nodep) {
@@ -486,7 +495,9 @@ class TaskVisitor final : public VNVisitor {
     AstTopScope* const m_topScopep = v3Global.rootp()->topScopep();  // The AstTopScope
     AstScope* m_scopep = nullptr;  // Current scope
     AstNode* m_insStmtp = nullptr;  // Where to insert statement
+    AstForkItem* m_forkItemp = nullptr;  // Fork branch we are under
     bool m_inSensesp = false;  // Are we under a senitem?
+    V3UniqueNames m_forkTmpNames{"__Vforktask"};  // Names of variables local to a fork branch
     // Variables created by createVarScope, shared by instances
     V3SharedTmps m_funcTmps{"__Vfunc", VVarType::BLOCKTEMP};  // For function calls
     V3SharedTmps m_taskTmps{"__Vtask", VVarType::BLOCKTEMP};  // For task calls
@@ -528,6 +539,20 @@ class TaskVisitor final : public VNVisitor {
     // Create variable for 'invarp' of the call 'refp', named after the called task and 'suffix'
     AstVarScope* createVarScope(const AstNodeFTaskRef* refp, AstVar* invarp,
                                 const std::string& suffix) {
+        // A fork branch may run as several processes at once, each with its own automatic
+        // variables, which are local to the branch so later passes keep one per process
+        if (m_forkItemp && invarp->lifetime().isAutomatic()) {
+            AstVar* const newvarp
+                = new AstVar{invarp->fileline(), VVarType::BLOCKTEMP,
+                             m_forkTmpNames.get(refp->taskp()->shortName() + suffix), invarp};
+            newvarp->funcLocal(true);
+            newvarp->propagateAttrFrom(invarp);
+            newvarp->isInternal(true);
+            m_forkItemp->addDeclsp(newvarp);
+            AstVarScope* const newvscp = new AstVarScope{newvarp->fileline(), m_scopep, newvarp};
+            m_scopep->addVarsp(newvscp);
+            return newvscp;
+        }
         // We could create under either the ref's scope or the ftask's scope.
         // It shouldn't matter, as they are only local variables.
         // We choose to do it under whichever called this function, which results
@@ -686,7 +711,8 @@ class TaskVisitor final : public VNVisitor {
             if (portp->isRef() || portp->isConstRef()) {
                 bool refArgOk = false;
                 if (VN_IS(pinp, VarRef) || VN_IS(pinp, MemberRef) || VN_IS(pinp, StructSel)
-                    || VN_IS(pinp, ArraySel)) {
+                    || VN_IS(pinp, ArraySel) || VN_IS(pinp, AssocSel)
+                    || VN_IS(pinp, WildcardSel)) {
                     refArgOk = true;
                 } else if (AstCMethodHard* const cMethodp = VN_CAST(pinp, CMethodHard)) {
                     if (VN_IS(cMethodp->fromp()->dtypep()->skipRefp(), QueueDType)) {
@@ -2243,11 +2269,12 @@ class TaskVisitor final : public VNVisitor {
 
             const bool noInline = m_statep->ftaskNoInline(nodep);
             const bool needsNonInlineCFunc = m_statep->ftaskNeedsNonInlineCFunc(nodep);
-            // Warn if not inlining an impure ftask (unless method, recursive,
-            // or interface-local member access, which is not truly external).
+            // Warn if not inlining an impure ftask (unless method, called only by methods,
+            // recursive, or interface-local member access, which is not truly external).
             // Will likely not schedule correctly.
             // TODO: Why not if recursive? It will not work ...
-            if (noInline && !nodep->classMethod() && !nodep->recursive()) {
+            if (noInline && !nodep->classMethod() && !nodep->recursive()
+                && !m_statep->calledOnlyByMethods(nodep)) {
                 if (AstNode* const impurep = m_statep->checkImpure(nodep)) {
                     if (!isIfaceLocalImpure(nodep, impurep)) {
                         nodep->v3warn(IMPURE, "Unsupported: External variable referenced by "
@@ -2343,6 +2370,11 @@ class TaskVisitor final : public VNVisitor {
         iterateChildren(nodep);
         if (!nodep->exprp()) VL_DO_DANGLING(nodep->unlinkFrBack()->deleteTree(), nodep);
     }
+    void visit(AstForkItem* nodep) override {
+        VL_RESTORER(m_forkItemp);
+        m_forkItemp = nodep;
+        iterateChildren(nodep);
+    }
     void visit(AstSenItem* nodep) override {
         UASSERT_OBJ(!m_inSensesp, nodep, "Senitem under senitem?");
         VL_RESTORER(m_inSensesp);
@@ -2370,6 +2402,37 @@ public:
 // Task class functions
 
 const char* const V3Task::s_dpiTemporaryVarSuffix = "__Vcvt";
+
+// Return the default value of port 'portIdx' with the earlier input ports it reads replaced by
+// their arguments, or nullptr unless it is only operators on constants and such ports given
+// arguments without side effects
+static AstNodeExpr* newDefaultFromArgs(const V3TaskConnects& tconnects, size_t portIdx) {
+    const auto argOf = [&](const AstVar* varp) -> AstNodeExpr* {
+        for (size_t i = 0; i < portIdx; ++i) {
+            if (tconnects[i].first != varp) continue;
+            const AstArg* const argp = tconnects[i].second;
+            AstNodeExpr* const exprp = argp ? argp->exprp() : nullptr;
+            return varp->isInput() && exprp && exprp->isPure() ? exprp : nullptr;
+        }
+        return nullptr;
+    };
+    AstNodeExpr* const valuep = VN_AS(tconnects[portIdx].first->valuep(), NodeExpr);
+    const bool other = valuep->exists([&](AstNode* np) {
+        if (const AstVarRef* const refp = VN_CAST(np, VarRef)) return !argOf(refp->varp());
+        return !VN_IS(np, Const) && !VN_IS(np, NodeUniop) && !VN_IS(np, NodeBiop)
+               && !VN_IS(np, NodeTriop);
+    });
+    if (other) return nullptr;
+    if (const AstVarRef* const refp = VN_CAST(valuep, VarRef)) {
+        return argOf(refp->varp())->cloneTree(false);
+    }
+    AstNodeExpr* const newp = valuep->cloneTree(false);
+    newp->foreach([&](AstVarRef* refp) {
+        refp->replaceWith(argOf(refp->varp())->cloneTree(false));
+        VL_DO_DANGLING(refp->deleteTree(), refp);
+    });
+    return newp;
+}
 
 // Connect the arguments of reference 'nodep' to the ports in 'taskDeclsp' of 'calleep'.
 // Defaulted ports needing an argument wrapper (only with 'statep') are added to 'argWrap'.
@@ -2484,8 +2547,18 @@ static V3TaskConnects connectArgs(T_Ref* nodep, const AstNode* calleep, AstNode*
                 // expression that hasn't been folded yet. Try folding it
                 // now; we don't have much to lose if it fails.
                 newvaluep = V3Const::constifyEdit(VN_AS(portp->valuep(), NodeExpr));
-                if (!VN_IS(newvaluep, Const)) {
-                    if (statep) {
+                // A constructor cannot be wrapped, so use a default reading only earlier
+                // arguments, rebuilt from them
+                const AstNodeFTask* const ftaskp = VN_CAST(calleep, NodeFTask);
+                const bool isConstructor = ftaskp && ftaskp->isConstructor();
+                if (!VN_IS(newvaluep, Const) && isConstructor) {
+                    if (AstNodeExpr* const fromArgsp
+                        = newDefaultFromArgs(tconnects, static_cast<size_t>(i))) {
+                        newvaluep = fromArgsp;
+                    }
+                }
+                if (!VN_IS(newvaluep, Const) && newvaluep->backp()) {
+                    if (statep && !isConstructor) {
                         portp->pinNum(i + 1);  // Make sure correct, will use to build name
                         UINFO(9, "taskConnects arg wrapper needed " << portp->valuep());
                         argWrap.insert(portp);

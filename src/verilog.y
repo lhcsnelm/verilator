@@ -2807,17 +2807,18 @@ bind_directive<nodep>:          // ==IEEE: bind_directive + bind_target_scope
         //                      // We merged the rules - id may be a bind_target_instance or
         //                      // module_identifier or interface_identifier
                 yBIND bind_target_instance bind_instantiation
-                        { $$ = new AstBind{$<fl>2, $2, $3}; }
+                        { $$ = new AstBind{$<fl>2, $2, nullptr, $3}; }
         |       yBIND bind_target_instance/*scope*/ ':' bind_target_instance_list bind_instantiation
-                        { $$ = nullptr; BBUNSUP($1, "Unsupported: Bind with instance list"); DEL($5); }
+                        { $$ = new AstBind{$<fl>2, $2, $4, $5}; }
         ;
 
-bind_target_instance_list:      // ==IEEE: bind_target_instance_list
-                bind_target_instance                    { }
-        |       bind_target_instance_list ',' bind_target_instance      { }
+bind_target_instance_list<nodeExprp>:   // ==IEEE: bind_target_instance_list
+                bind_target_instance                    { $$ = $1; }
+        |       bind_target_instance_list ',' bind_target_instance
+                        { $$ = addNextNull($1, $3); }
         ;
 
-bind_target_instance<nodep>:    // ==IEEE: bind_target_instance
+bind_target_instance<nodeExprp>:        // ==IEEE: bind_target_instance
         //                      // IEEE: hierarchical_identifier constant_bit_select
         //                      // Happens to have same syntax as defparam pre-dot
                 defparamIdRangeList                     { $$ = $1; }
@@ -5951,10 +5952,14 @@ driveStrengthE<strengthSpecp>:
 driveStrength<strengthSpecp>:
                 yP_PAR__STRENGTH strength0 ',' strength1 ')' { $$ = new AstStrengthSpec{$1, $2, $4}; }
         |       yP_PAR__STRENGTH strength1 ',' strength0 ')' { $$ = new AstStrengthSpec{$1, $4, $2}; }
-        |       yP_PAR__STRENGTH strength0 ',' yHIGHZ1 ')' { $$ = nullptr; BBUNSUP($<fl>4, "Unsupported: highz strength"); }
-        |       yP_PAR__STRENGTH strength1 ',' yHIGHZ0 ')' { $$ = nullptr; BBUNSUP($<fl>4, "Unsupported: highz strength"); }
-        |       yP_PAR__STRENGTH yHIGHZ0 ',' strength1 ')' { $$ = nullptr; BBUNSUP($<fl>2, "Unsupported: highz strength"); }
-        |       yP_PAR__STRENGTH yHIGHZ1 ',' strength0 ')' { $$ = nullptr; BBUNSUP($<fl>2, "Unsupported: highz strength"); }
+        |       yP_PAR__STRENGTH strength0 ',' yHIGHZ1 ')'
+                        { $$ = new AstStrengthSpec{$1, $2, VStrength::HIGHZ}; }
+        |       yP_PAR__STRENGTH strength1 ',' yHIGHZ0 ')'
+                        { $$ = new AstStrengthSpec{$1, VStrength::HIGHZ, $2}; }
+        |       yP_PAR__STRENGTH yHIGHZ0 ',' strength1 ')'
+                        { $$ = new AstStrengthSpec{$1, VStrength::HIGHZ, $4}; }
+        |       yP_PAR__STRENGTH yHIGHZ1 ',' strength0 ')'
+                        { $$ = new AstStrengthSpec{$1, $4, VStrength::HIGHZ}; }
         ;
 
 pulldown_strengthE<nodep>:  // IEEE: [ pulldown_strength ]
@@ -5963,9 +5968,13 @@ pulldown_strengthE<nodep>:  // IEEE: [ pulldown_strength ]
         ;
 
 pulldown_strength<nodep>:  // IEEE: pulldown_strength
-                yP_PAR__STRENGTH strength0 ',' strength1 ')'  { $$ = nullptr; BBUNSUP($<fl>2, "Unsupported: pulldown strength"); }
-        |       yP_PAR__STRENGTH strength1 ',' strength0 ')'  { $$ = nullptr; BBUNSUP($<fl>2, "Unsupported: pulldown strength"); }
-        |       yP_PAR__STRENGTH strength0 ')'                { $$ = nullptr; BBUNSUP($<fl>2, "Unsupported: pulldown strength"); }
+        //                      // Pulls drive only otherwise undriven bits, so model at most pull
+                yP_PAR__STRENGTH strength0 ',' strength1 ')'
+                        { $$ = nullptr; if ($2 > VStrength::PULL) BBUNSUP($<fl>2, "Unsupported: pulldown strength stronger than pull"); }
+        |       yP_PAR__STRENGTH strength1 ',' strength0 ')'
+                        { $$ = nullptr; if ($4 > VStrength::PULL) BBUNSUP($<fl>4, "Unsupported: pulldown strength stronger than pull"); }
+        |       yP_PAR__STRENGTH strength0 ')'
+                        { $$ = nullptr; if ($2 > VStrength::PULL) BBUNSUP($<fl>2, "Unsupported: pulldown strength stronger than pull"); }
         ;
 
 pullup_strengthE<nodep>:  // IEEE: [ pullup_strength ]
@@ -5974,9 +5983,13 @@ pullup_strengthE<nodep>:  // IEEE: [ pullup_strength ]
         ;
 
 pullup_strength<nodep>:  // IEEE: pullup_strength
-                yP_PAR__STRENGTH strength0 ',' strength1 ')'  { $$ = nullptr; BBUNSUP($<fl>2, "Unsupported: pullup strength"); }
-        |       yP_PAR__STRENGTH strength1 ',' strength0 ')'  { $$ = nullptr; BBUNSUP($<fl>2, "Unsupported: pullup strength"); }
-        |       yP_PAR__STRENGTH strength1 ')'                { $$ = nullptr; BBUNSUP($<fl>2, "Unsupported: pullup strength"); }
+        //                      // Pulls drive only otherwise undriven bits, so model at most pull
+                yP_PAR__STRENGTH strength0 ',' strength1 ')'
+                        { $$ = nullptr; if ($4 > VStrength::PULL) BBUNSUP($<fl>4, "Unsupported: pullup strength stronger than pull"); }
+        |       yP_PAR__STRENGTH strength1 ',' strength0 ')'
+                        { $$ = nullptr; if ($2 > VStrength::PULL) BBUNSUP($<fl>2, "Unsupported: pullup strength stronger than pull"); }
+        |       yP_PAR__STRENGTH strength1 ')'
+                        { $$ = nullptr; if ($2 > VStrength::PULL) BBUNSUP($<fl>2, "Unsupported: pullup strength stronger than pull"); }
         ;
 
 //************************************************

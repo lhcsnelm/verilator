@@ -1,0 +1,17 @@
+%Error: t/t_bind_dot_bad.v:9:12: Can't find bind target instance: 'u_none'
+    9 |   bind u_a.u_none mycheck u_check1 ();   
+      |            ^~~~~~
+        ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
+%Error: t/t_bind_dot_bad.v:10:8: Can't find bind target instance: 'u_none'
+   10 |   bind u_none.u_b mycheck u_check2 ();   
+      |        ^~~~~~
+%Error: t/t_bind_dot_bad.v:11:12: Bind target is not an instance: 'gen_blk'
+   11 |   bind u_a.gen_blk mycheck u_check3 ();   
+      |            ^~~~~~~
+%Error: t/t_bind_dot_bad.v:12:11: Bind target scope with an instance list must be a module or interface name (IEEE 1800-2023 23.11)
+   12 |   bind u_a.u_b : u_a.u_b mycheck u_check4 ();   
+      |           ^
+%Error: t/t_bind_dot_bad.v:13:18: Bind target instance is not an instance of the bind target module 'moda', but of 'modb'
+   13 |   bind moda : u_a.u_b mycheck u_check5 ();   
+      |                  ^
+%Error: Exiting due to

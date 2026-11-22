@@ -276,8 +276,9 @@ class TransformForksVisitor final : public VNVisitor {
             resp = AstNode::addNext(resp, stmtsp->unlinkFrBackWithNext());
         }
         while (AstForkItem* const itemp = nodep->forksp()) {
-            if (AstNode* const declsp = itemp->declsp()) {
-                resp = AstNode::addNext(resp, declsp->unlinkFrBackWithNext());
+            // A branch that does not suspend runs in this function, which holds its variables
+            if (AstVar* const declsp = itemp->declsp()) {
+                m_funcp->addVarsp(declsp->unlinkFrBackWithNext());
             }
             if (AstNode* const stmtsp = itemp->stmtsp()) {
                 resp = AstNode::addNext(resp, stmtsp->unlinkFrBackWithNext());

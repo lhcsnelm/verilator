@@ -32,6 +32,9 @@ Summary:
    relative to where the make will be executed from, or add to your
    makefile's VPATH the appropriate directory to find the file.
 
+   ``.c`` files are compiled as C, with the make variable ``CC``, and the
+   C++ flags without those only for C++.
+
    ``.cppm`` and ``.ixx`` files are C++20 module interface units.  Pass
    :vlopt:`--cxx-modules`; listing a ``.cppm``/``.ixx`` file on the command
    line enables the module build by itself.

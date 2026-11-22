@@ -558,6 +558,17 @@ class LinkParseVisitor final : public VNVisitor {
         // temporaries under an always aren't expected to be blocking
         if (m_procedurep && VN_IS(m_procedurep, Always))
             nodep->fileline()->modifyWarnOff(V3ErrorCode::BLKSEQ, true);
+        // A localparam of a runtime-sized array has no constant value, so becomes a constant
+        // variable set before time zero
+        const AstBracketArrayDType* const bracketp
+            = VN_CAST(nodep->childDTypep(), BracketArrayDType);
+        if (nodep->varType() == VVarType::LPARAM && nodep->valuep()
+            && (VN_IS(nodep->childDTypep(), DynArrayDType)
+                || VN_IS(nodep->childDTypep(), QueueDType)
+                || (bracketp && VN_IS(bracketp->elementsp(), Unbounded)))) {
+            nodep->varType(VVarType::VAR);
+            nodep->isConst(true);
+        }
         // Compute initial value
         if (nodep->valuep() || nodep->needsCReset()) {
             FileLine* const fl = nodep->valuep() ? nodep->valuep()->fileline() : nodep->fileline();

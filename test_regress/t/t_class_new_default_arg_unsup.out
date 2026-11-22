@@ -1,0 +1,6 @@
+%Error-UNSUPPORTED: t/t_class_new_default_arg_unsup.v:19:9: Unsupported: Non-constant default value in missing argument 'depth' in function call to FUNC 'new'
+                                                          : ... note: In instance 't'
+   19 |     c = new;
+      |         ^~~
+                    ... For error description see https://verilator.org/warn/UNSUPPORTED?v=latest
+%Error: Exiting due to

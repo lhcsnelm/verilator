@@ -210,6 +210,9 @@ ifneq ($(VM_TIMING),0)
   endif
 endif
 
+# Preprocessor flags for C files on the command line, without the C++ only flags
+VK_C_CPPFLAGS = $(filter-out -std=c++% -std=gnu++% -faligned-new -fcoroutines%,$(CPPFLAGS))
+
 #######################################################################
 ### Aggregates
 

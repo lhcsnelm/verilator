@@ -1687,7 +1687,11 @@ List Of Warnings
    other simulators, by the ascending range ``[0:size-1]``. Likewise, a
    keyed assignment pattern without the leading apostrophe, such as
    ``{default: 0}`` as accepted by other simulators, is replaced by
-   ``'{default: 0}``.
+   ``'{default: 0}``. An assignment between unpacked arrays whose element
+   types differ only in being 2-state or 4-state, such as a ``bit [7:0]``
+   queue assigned from a ``logic [7:0]`` queue, is also accepted as other
+   simulators do, although IEEE 1800-2023 7.6 requires equivalent element
+   types.
 
    Ignoring this warning will only suppress the lint check; it will
    simulate correctly.

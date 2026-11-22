@@ -147,11 +147,13 @@ public:
             const IfaceCallable callable = m_reachableIfaceCallables[i];
             callable.second->foreach([this, callable](AstNodeExpr* const nodep) {
                 if (AstVarRef* const refp = VN_CAST(nodep, VarRef)) {
-                    // Only persistent interface storage is observable through a VIF read.
+                    // Only persistent interface storage is observable through a VIF read,
+                    // not internal state, as for randomization
                     UASSERT_OBJ(refp->varScopep(), refp, "No var scope");
                     AstVar* const varp = refp->varp();
                     if (!refp->access().isWriteOrRW() || varp->isFuncLocal() || varp->isTemp()
-                        || varp->isEvent() || !VN_IS(refp->varScopep()->scopep()->modp(), Iface)) {
+                        || varp->isInternal() || varp->isEvent()
+                        || !VN_IS(refp->varScopep()->scopep()->modp(), Iface)) {
                         return;
                     }
                     varp->sensIfacep(callable.first);

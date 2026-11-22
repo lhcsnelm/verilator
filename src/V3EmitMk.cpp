@@ -824,6 +824,12 @@ public:
         if (!v3Global.opt.cxxModules()) {
             for (const string& cppfile : cppFiles) {
                 const string basename = V3Os::filenameNonDirExt(cppfile);
+                if (VString::endsWith(cppfile, ".c")) {  // C, not C++
+                    of.puts(basename + ".o: " + cppfile + "\n");
+                    of.puts("\t$(OBJCACHE) $(CC) $(CFLAGS) $(VK_C_CPPFLAGS) $(OPT_FAST)"
+                            " -c -o $@ $<\n");
+                    continue;
+                }
                 // NOLINTNEXTLINE(performance-inefficient-string-concatenation)
                 of.puts(basename + ".o: " + cppfile + " " + compilerIncludePch + "\n");
 

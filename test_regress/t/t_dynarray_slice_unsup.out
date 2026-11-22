@@ -1,0 +1,6 @@
+%Error-UNSUPPORTED: t/t_dynarray_slice_unsup.v:15:15: Unsupported: +: or -: select of queue or dynamic array with index having side effects
+                                                    : ... note: In instance 't'
+   15 |     part = d[n++ +:2];
+      |               ^~
+                    ... For error description see https://verilator.org/warn/UNSUPPORTED?v=latest
+%Error: Exiting due to

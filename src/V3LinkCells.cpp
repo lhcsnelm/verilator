@@ -33,6 +33,7 @@
 #include "V3Stats.h"
 #include "V3SymTable.h"
 
+#include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -219,12 +220,14 @@ class LinkCellsVisitor final : public VNVisitor {
     //  Entire netlist:
     //   AstNodeModule::user1p()        // V3GraphVertex*    Vertex describing this module
     //   AstNodeModule::user2p()        // AstNodeModule*    clone used for de-recursing
+    //   AstNodeModule::user3()         // int    Instances, counting loop/array cells as two
     //   AstCell::user1p()              // ==V3NodeModule* if done, != if unprocessed
     //   AstCell::user2()               // bool   clone renaming completed
     //  Allocated across all readFiles in V3Global::readFiles:
     //   AstNode::user4p()      // VSymEnt*    Package and typedef symbol names
     const VNUser1InUse m_inuser1;
     const VNUser2InUse m_inuser2;
+    const VNUser3InUse m_inuser3;
 
     // STATE
     VInFilter* const m_filterp;  // Parser filter
@@ -235,6 +238,10 @@ class LinkCellsVisitor final : public VNVisitor {
     AstPackage* m_pkgp = nullptr;  // Package being visited, which is or contains m_modp
     AstVar* m_varp = nullptr;  // Current variable
     bool m_fromBind = false;  // Visiting cells inserted by a bind directive
+    bool m_inGenFor = false;  // Under a generate loop, so a cell may make several instances
+    // Binds to instances, with the module containing each, linked once all cells are linked
+    std::vector<std::pair<AstBind*, AstNodeModule*>> m_instBinds;
+    int m_bindCloneNum = 0;  // Modules cloned so a bind targets only one of their instances
     VSymGraph m_mods;  // Symbol table of all module names
     std::unordered_map<string, AstPackage*> m_packages;  // Packages table
     std::unordered_set<string> m_autoLoaded;  // Names already searched for on disk
@@ -414,10 +421,176 @@ class LinkCellsVisitor final : public VNVisitor {
         }
     }
 
+    static AstNode* findBindPathItem(AstNode* stmtsp, const string& name) {
+        // Find the instance or named generate block a bind target path names in a scope.
+        // Instances under loops or arrays are not found, as they need a select.
+        for (AstNode* itemp = stmtsp; itemp; itemp = itemp->nextp()) {
+            AstNode* foundp = nullptr;
+            if (AstCell* const cellp = VN_CAST(itemp, Cell)) {
+                if (cellp->name() == name && !cellp->rangep()) return cellp;
+            } else if (AstGenBlock* const blockp = VN_CAST(itemp, GenBlock)) {
+                if (blockp->name() == name && !blockp->genforp()) return blockp;
+            } else if (const AstGenIf* const ifp = VN_CAST(itemp, GenIf)) {
+                // Branch blocks are scopes of the scope holding the generate if
+                foundp = findBindPathItem(ifp->thensp(), name);
+                if (!foundp) foundp = findBindPathItem(ifp->elsesp(), name);
+            } else if (const AstGenCase* const casep = VN_CAST(itemp, GenCase)) {
+                for (const AstGenCaseItem* const caseItemp : casep->itemspList()) {
+                    foundp = findBindPathItem(caseItemp->itemsp(), name);
+                    if (foundp) break;
+                }
+            }
+            if (foundp) return foundp;
+        }
+        return nullptr;
+    }
+
+    AstNodeModule* bindUniqueModule(AstNodeModule* parentModp, AstCell* cellp) {
+        // Clone the module of a cell, so the cell is the only instance of its module
+        AstNodeModule* const origModp = cellp->modp();
+        AstNodeModule* const newModp = origModp->cloneTree(false);
+        newModp->name(origModp->name() + "__Vbind" + cvtToStr(++m_bindCloneNum));
+        newModp->user1p(nullptr);  // Need new vertex
+        newModp->user3(1);
+        origModp->user3(origModp->user3() - 1);
+        v3Global.rootp()->addModulesp(newModp);
+        cellp->modp(newModp);
+        cellp->modName(newModp->name());
+        for (V3GraphEdge& edge : vertex(parentModp)->outEdges()) {
+            CellEdge* const cedgep = edge.cast<CellEdge>();
+            if (cedgep && cedgep->cellp() == cellp) {
+                cedgep->relinkTop(vertex(newModp));
+                break;
+            }
+        }
+        // Link the clone's cells, counting the instances they add
+        iterate(newModp);
+        return newModp;
+    }
+
+    AstNodeModule* bindInstanceModule(AstNodeExpr* pathp, AstNodeModule* modp,
+                                      const AstNodeModule* typep) {
+        // Return the module to add the cells of a bind to the instance at a path relative to
+        // modp, cloning modules along the path so the instance is the module's only one.
+        // If typep is set, the instance must be of that module.
+        std::vector<AstNode*> segps;
+        AstNode* restp = pathp;
+        while (const AstDot* const dotp = VN_CAST(restp, Dot)) {
+            segps.push_back(dotp->rhsp());
+            restp = dotp->lhsp();
+        }
+        segps.push_back(restp);
+        std::reverse(segps.begin(), segps.end());
+
+        AstNode* stmtsp = modp->stmtsp();
+        AstCell* cellp = nullptr;
+        for (AstNode* const segp : segps) {
+            const AstParseRef* const refp = VN_CAST(segp, ParseRef);
+            if (!refp) {
+                segp->v3warn(E_UNSUPPORTED, "Unsupported: bind target instance path with select");
+                return nullptr;
+            }
+            AstNode* const itemp = findBindPathItem(stmtsp, refp->name());
+            if (!itemp) {
+                // A path may start at a top-level module (IEEE 1800-2023 23.6)
+                AstNodeModule* const topModp = segp == segps.front()
+                                                   ? findModuleSym(refp->name(), modp->libname())
+                                                   : nullptr;
+                if (!topModp) {
+                    refp->v3error("Can't find bind target instance: " << refp->prettyNameQ());
+                    return nullptr;
+                }
+                modp = topModp;
+                stmtsp = modp->stmtsp();
+                continue;
+            }
+            cellp = VN_CAST(itemp, Cell);
+            if (!cellp) {  // Generate block
+                stmtsp = VN_AS(itemp, GenBlock)->itemsp();
+                continue;
+            }
+            if (!cellp->modp() || VN_IS(cellp->modp(), NotFoundModule)) return nullptr;
+            if (cellp->modp()->user3() > 1) {
+                modp = bindUniqueModule(modp, cellp);
+            } else {
+                modp = cellp->modp();
+            }
+            stmtsp = modp->stmtsp();
+        }
+        if (!cellp) {
+            segps.back()->v3error("Bind target is not an instance: "
+                                  << segps.back()->prettyNameQ());
+            return nullptr;
+        }
+        if (typep && modp->origName() != typep->origName()) {
+            pathp->v3error("Bind target instance is not an instance of the bind target module "
+                           << typep->prettyNameQ() << ", but of "
+                           << AstNode::prettyNameQ(modp->origName()));
+            return nullptr;
+        }
+        return modp;
+    }
+
+    void bindCells(AstNodeModule* modp, AstNode* cellsp) {
+        // Add the cells of a bind to the module they are bound into
+        VL_RESTORER(m_modp);
+        VL_RESTORER(m_fromBind);
+        VL_RESTORER(m_inGenFor);
+        m_modp = modp;
+        m_fromBind = true;
+        m_inGenFor = false;
+        // Important that this adds to end, as next iterate assumes does all cells
+        modp->addStmtsp(cellsp);
+        // Module may have already linked, so need to pick up these new cells
+        iterateAndNextNull(cellsp);
+    }
+
+    void bindInstances(AstBind* nodep, AstNodeModule* scopeModp) {
+        // Add the cells of a bind to each instance it targets (IEEE 1800-2023 23.11)
+        const AstNodeModule* typep = nullptr;
+        if (nodep->instsp()) {
+            if (const AstParseRef* const refp = VN_CAST(nodep->targetp(), ParseRef)) {
+                typep = resolveModule(nodep, refp->name(), scopeModp->libname());
+            } else {
+                nodep->targetp()->v3error(
+                    "Bind target scope with an instance list must be a module or interface "
+                    "name (IEEE 1800-2023 23.11)");
+            }
+            if (!typep) {
+                VL_DO_DANGLING(pushDeletep(nodep), nodep);
+                return;
+            }
+        }
+        for (AstNodeExpr* pathp = nodep->instsp() ? nodep->instsp() : nodep->targetp(); pathp;
+             pathp = VN_AS(pathp->nextp(), NodeExpr)) {
+            AstNodeModule* const modp = bindInstanceModule(pathp, scopeModp, typep);
+            if (!modp || modp->verilatorLib()) continue;
+            // Each instance gets its own copy of the cells
+            bindCells(modp, pathp->nextp() ? nodep->cellsp()->cloneTree(true)
+                                           : nodep->cellsp()->unlinkFrBackWithNext());
+        }
+        VL_DO_DANGLING(pushDeletep(nodep), nodep);
+    }
+
+    void linkInstBinds(AstNetlist* nodep) {
+        // Bind to instances, which needs all cells in their scopes to be linked
+        if (m_instBinds.empty()) return;
+        AstNode* lastModp = nodep->modulesp()->lastp();
+        // Linking bound cells may read modules, whose binds add to the list
+        for (size_t i = 0; i < m_instBinds.size(); ++i) {
+            bindInstances(m_instBinds[i].first, m_instBinds[i].second);
+            for (AstNode* modp = lastModp->nextp(); modp; modp = modp->nextp()) {
+                if (!modp->user1p()) iterate(modp);  // Read for bound cells, not yet linked
+                lastModp = modp;
+            }
+        }
+    }
+
     // VISITORS
     void visit(AstNetlist* nodep) override {
         readModNames(nodep->modulesp());
         iterateChildren(nodep);
+        linkInstBinds(nodep);
 
         // Replace instance module pointers based on config
         AstNodeModule* modp = nullptr;
@@ -496,7 +669,7 @@ class LinkCellsVisitor final : public VNVisitor {
             vertex(m_modp);
             ++m_modDepth;
             UINFO(4, "Link Module: " << nodep);
-            if (nodep->fileline()->filebasenameNoExt() != nodep->prettyName()
+            if (nodep->fileline()->filebasenameNoExt() != AstNode::prettyName(nodep->origName())
                 && !v3Global.opt.isLibraryFile(nodep->fileline()->filename(), nodep->libname())
                 && !VN_IS(nodep, NotFoundModule) && !nodep->recursiveClone()
                 && !nodep->isDollarUnit() && !nodep->isConstPool() && m_modDepth == 1) {
@@ -599,32 +772,27 @@ class LinkCellsVisitor final : public VNVisitor {
     void visit(AstBind* nodep) override {
         // Bind: Has cells underneath that need to be put into the new
         // module, and cells which need resolution
-        // TODO this doesn't allow bind to dotted hier names, that would require
-        // this move to post param, which would mean we do not auto-read modules
-        // and means we cannot compute module levels until later.
         UINFO(4, "Link Bind: " << nodep);
-        AstParseRef* const targetp = VN_CAST(nodep->targetp(), ParseRef);
-        if (!targetp) {
-            nodep->targetp()->v3warn(E_UNSUPPORTED,
-                                     "Unsupported: bind with dotted bind_target_scope");
-            VL_DO_DANGLING(pushDeletep(nodep->unlinkFrBack()), nodep);
+        const AstParseRef* const targetp = VN_CAST(nodep->targetp(), ParseRef);
+        // A plain name is a module, else an instance in this scope (IEEE 1800-2023 23.11)
+        if (nodep->instsp() || !targetp
+            || (!findModuleSym(targetp->name(), m_modp->libname())
+                && findBindPathItem(m_modp->stmtsp(), targetp->name()))) {
+            // Instances may be declared later, so bind once all cells are linked
+            m_instBinds.emplace_back(nodep->unlinkFrBack(), m_modp);
             return;
         }
-        const std::string name = targetp->name();
-
-        AstNodeModule* const modp = resolveModule(nodep, name, m_modp->libname());
+        AstNodeModule* const modp = resolveModule(nodep, targetp->name(), m_modp->libname());
         if (modp && !modp->verilatorLib()) {
-            AstNode* const cellsp = nodep->cellsp()->unlinkFrBackWithNext();
-            // Module may have already linked, so need to pick up these new cells
-            VL_RESTORER(m_modp);
-            VL_RESTORER(m_fromBind);
-            m_modp = modp;
-            m_fromBind = true;
-            // Important that this adds to end, as next iterate assumes does all cells
-            modp->addStmtsp(cellsp);
-            iterateAndNextNull(cellsp);
+            bindCells(modp, nodep->cellsp()->unlinkFrBackWithNext());
         }
         VL_DO_DANGLING(pushDeletep(nodep->unlinkFrBack()), nodep);
+    }
+
+    void visit(AstGenFor* nodep) override {
+        VL_RESTORER(m_inGenFor);
+        m_inGenFor = true;
+        iterateChildren(nodep);
     }
 
     void visit(AstCell* nodep) override {
@@ -690,6 +858,7 @@ class LinkCellsVisitor final : public VNVisitor {
                     // Track module depths, so can sort list from parent down to children
                     nodep->modp(cellmodp);
                     cellEdge(vertex(m_modp), vertex(cellmodp), 1, false, nodep);
+                    cellmodp->user3Inc((m_inGenFor || nodep->rangep()) ? 2 : 1);
                 }
             }
         }

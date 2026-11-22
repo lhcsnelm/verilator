@@ -1,0 +1,10 @@
+%Error-UNSUPPORTED: t/t_dynarray_bits_unsup.v:13:14: Unsupported: $bits of dynamic array or queue of dynamically sized elements
+                                                   : ... note: In instance 't'
+   13 |     $display($bits(a));
+      |              ^~~~~
+                    ... For error description see https://verilator.org/warn/UNSUPPORTED?v=latest
+%Error-UNSUPPORTED: t/t_dynarray_bits_unsup.v:14:14: Unsupported: $bits of dynamic array or queue of dynamically sized elements
+                                                   : ... note: In instance 't'
+   14 |     $display($bits(q));
+      |              ^~~~~
+%Error: Exiting due to

@@ -5,111 +5,123 @@
    35 |   logic unpackedF[3] = unpackedA;
       |                        ^~~~~~~~~
         ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
-%Error: t/t_assignment_compatibility_bad.v:36:31: Assignment between 2-state and 4-state types requires equivalent element types (IEEE 1800-2023 6.22.2, 7.6)
-                                                : ... note: In instance 't'
-                                                : ... Left-hand data type: 'bit$[0:1]' (2-state)
-                                                : ... Right-hand data type: 'logic$[0:1]' (4-state)
+%Warning-NONSTD: t/t_assignment_compatibility_bad.v:36:31: Assignment between arrays of 2-state and 4-state elements (IEEE 1800-2023 6.22.2, 7.6)
+                                                         : ... note: In instance 't'
+                                                         : ... Left-hand data type: 'bit$[0:1]' (2-state)
+                                                         : ... Right-hand data type: 'logic$[0:1]' (4-state)
    36 |   bit unpackedG[2] = unpackedB[0:1];
       |                               ^
-%Error: t/t_assignment_compatibility_bad.v:38:20: Illegal assignment: Unmatched array sizes (IEEE 1800-2023 7.6)
+                 ... For warning description see https://verilator.org/warn/NONSTD?v=latest
+                 ... Use "/* verilator lint_off NONSTD */" and lint_on around source to disable this message.
+%Error: t/t_assignment_compatibility_bad.v:37:37: Assignment between 2-state and 4-state types requires equivalent element types (IEEE 1800-2023 6.22.2, 7.6)
+                                                : ... note: In instance 't'
+                                                : ... Left-hand data type: 'bit[1:0]$[0:1]' (2-state)
+                                                : ... Right-hand data type: 'logic$[0:1]' (4-state)
+   37 |   bit [1:0] unpackedH[2] = unpackedB[0:1];
+      |                                     ^
+%Warning-WIDTHEXPAND: t/t_assignment_compatibility_bad.v:37:37: Operator ASSIGN expects 2 bits on the Assign RHS, but Assign RHS's SLICESEL generates 1 bits.
+                                                              : ... note: In instance 't'
+   37 |   bit [1:0] unpackedH[2] = unpackedB[0:1];
+      |                                     ^
+                      ... For warning description see https://verilator.org/warn/WIDTHEXPAND?v=latest
+                      ... Use "/* verilator lint_off WIDTHEXPAND */" and lint_on around source to disable this message.
+%Error: t/t_assignment_compatibility_bad.v:39:20: Illegal assignment: Unmatched array sizes (IEEE 1800-2023 7.6)
                                                 : ... note: In instance 't'
                                                 : ... Left-hand data type: 'logic$[0:2]'
                                                 : ... Right-hand data type: 'logic$[0:1]'
-   38 |   assign unpackedB = unpackedA;
+   39 |   assign unpackedB = unpackedA;
       |                    ^
-%Error: t/t_assignment_compatibility_bad.v:39:20: Illegal assignment: Unmatched number of unpacked dimensions (IEEE 1800-2023 7.6)
+%Error: t/t_assignment_compatibility_bad.v:40:20: Illegal assignment: Unmatched number of unpacked dimensions (IEEE 1800-2023 7.6)
                                                 : ... note: In instance 't'
                                                 : ... Left-hand data type: 'logic$[0:2]'
                                                 : ... Right-hand data type: 'logic$[0:2][0:1]'
-   39 |   assign unpackedB = unpackedC;
+   40 |   assign unpackedB = unpackedC;
       |                    ^
-%Error: t/t_assignment_compatibility_bad.v:40:20: Illegal assignment: Unmatched array sizes (IEEE 1800-2023 7.6)
+%Error: t/t_assignment_compatibility_bad.v:41:20: Illegal assignment: Unmatched array sizes (IEEE 1800-2023 7.6)
                                                 : ... note: In instance 't'
                                                 : ... Left-hand data type: 'logic$[0:3][0:1]'
                                                 : ... Right-hand data type: 'logic$[0:2][0:1]'
-   40 |   assign unpackedD = unpackedC;
+   41 |   assign unpackedD = unpackedC;
       |                    ^
-%Error: t/t_assignment_compatibility_bad.v:41:20: Illegal assignment: Array element types are not equivalent (IEEE 1800-2023 6.22.2)
+%Error: t/t_assignment_compatibility_bad.v:42:20: Illegal assignment: Array element types are not equivalent (IEEE 1800-2023 6.22.2)
                                                 : ... note: In instance 't'
                                                 : ... Left-hand data type: 'struct $unit::struct_t$[0:3][0:1]' (2-state)
                                                 : ... Right-hand data type: 'logic$[0:3][0:1]' (4-state)
-   41 |   assign unpackedE = unpackedD;
+   42 |   assign unpackedE = unpackedD;
       |                    ^
-%Warning-WIDTHEXPAND: t/t_assignment_compatibility_bad.v:41:20: Operator ASSIGNW expects 64 bits on the Assign RHS, but Assign RHS's VARREF 'unpackedD' generates 1 bits.
+%Warning-WIDTHEXPAND: t/t_assignment_compatibility_bad.v:42:20: Operator ASSIGNW expects 64 bits on the Assign RHS, but Assign RHS's VARREF 'unpackedD' generates 1 bits.
                                                               : ... note: In instance 't'
-   41 |   assign unpackedE = unpackedD;
+   42 |   assign unpackedE = unpackedD;
       |                    ^
-                      ... For warning description see https://verilator.org/warn/WIDTHEXPAND?v=latest
-                      ... Use "/* verilator lint_off WIDTHEXPAND */" and lint_on around source to disable this message.
-%Error: t/t_assignment_compatibility_bad.v:42:23: Illegal assignment: types are not assignment compatible (IEEE 1800-2023 7.6)
+%Error: t/t_assignment_compatibility_bad.v:43:23: Illegal assignment: types are not assignment compatible (IEEE 1800-2023 7.6)
                                                 : ... note: In instance 't'
         ... Array needs an array index
                                                 : ... Left-hand data type: 'logic'
                                                 : ... Right-hand data type: 'logic$[0:1]'
-   42 |   assign nonAggregate = unpackedA;
+   43 |   assign nonAggregate = unpackedA;
       |                       ^
-%Error: t/t_assignment_compatibility_bad.v:43:20: Illegal assignment: Associative arrays are assignment compatible only with associative arrays (IEEE 1800-2023 7.6)
+%Error: t/t_assignment_compatibility_bad.v:44:20: Illegal assignment: Associative arrays are assignment compatible only with associative arrays (IEEE 1800-2023 7.6)
                                                 : ... note: In instance 't'
                                                 : ... Left-hand data type: 'logic$[0:1]' (4-state)
                                                 : ... Right-hand data type: 'logic$[string]' (2-state)
-   43 |   assign unpackedA = assocArrayA;
+   44 |   assign unpackedA = assocArrayA;
       |                    ^
-%Error: t/t_assignment_compatibility_bad.v:44:17: Illegal assignment: Array element types are not equivalent (IEEE 1800-2023 6.22.2)
-                                                : ... note: In instance 't'
-                                                : ... Left-hand data type: 'logic$[$]'
-                                                : ... Right-hand data type: 'bit$[$]'
-   44 |   assign queueA = queueB;
+%Warning-NONSTD: t/t_assignment_compatibility_bad.v:45:17: Assignment between arrays of 2-state and 4-state elements (IEEE 1800-2023 6.22.2, 7.6)
+                                                         : ... note: In instance 't'
+                                                         : ... Left-hand data type: 'logic$[$]'
+                                                         : ... Right-hand data type: 'bit$[$]'
+   45 |   assign queueA = queueB;
       |                 ^
-%Error: t/t_assignment_compatibility_bad.v:46:24: Illegal assignment: types are not assignment compatible (IEEE 1800-2023 7.6)
+%Error: t/t_assignment_compatibility_bad.v:47:24: Illegal assignment: types are not assignment compatible (IEEE 1800-2023 7.6)
                                                 : ... note: In instance 't'
                                                 : ... Left-hand data type: 'struct $unit::ustruct_t'
                                                 : ... Right-hand data type: 'bit[31:0]'
-   46 |   ustruct_t ustructA = 7;
+   47 |   ustruct_t ustructA = 7;
       |                        ^
-%Error: t/t_assignment_compatibility_bad.v:47:29: Illegal assignment: types are not assignment compatible (IEEE 1800-2023 7.6)
+%Error: t/t_assignment_compatibility_bad.v:48:29: Illegal assignment: types are not assignment compatible (IEEE 1800-2023 7.6)
                                                 : ... note: In instance 't'
                                                 : ... Left-hand data type: 'struct $unit::ustruct_t'
                                                 : ... Right-hand data type: 'bit[31:0]'
-   47 |   ustruct_t ustructB[2] = '{7, 8};
+   48 |   ustruct_t ustructB[2] = '{7, 8};
       |                             ^
-%Error: t/t_assignment_compatibility_bad.v:47:32: Illegal assignment: types are not assignment compatible (IEEE 1800-2023 7.6)
+%Error: t/t_assignment_compatibility_bad.v:48:32: Illegal assignment: types are not assignment compatible (IEEE 1800-2023 7.6)
                                                 : ... note: In instance 't'
                                                 : ... Left-hand data type: 'struct $unit::ustruct_t'
                                                 : ... Right-hand data type: 'bit[31:0]'
-   47 |   ustruct_t ustructB[2] = '{7, 8};
+   48 |   ustruct_t ustructB[2] = '{7, 8};
       |                                ^
-%Error: t/t_assignment_compatibility_bad.v:49:43: Illegal assignment: types are not assignment compatible (IEEE 1800-2023 7.6)
+%Error: t/t_assignment_compatibility_bad.v:50:43: Illegal assignment: types are not assignment compatible (IEEE 1800-2023 7.6)
                                                 : ... Left-hand data type: 'struct $unit::ustruct_t'
                                                 : ... Right-hand data type: 'bit[31:0]'
-   49 |   ustruct_t ustructD[2][2] = '{default: '{7, 8}};
+   50 |   ustruct_t ustructD[2][2] = '{default: '{7, 8}};
       |                                           ^
-%Error: t/t_assignment_compatibility_bad.v:49:46: Illegal assignment: types are not assignment compatible (IEEE 1800-2023 7.6)
+%Error: t/t_assignment_compatibility_bad.v:50:46: Illegal assignment: types are not assignment compatible (IEEE 1800-2023 7.6)
                                                 : ... Left-hand data type: 'struct $unit::ustruct_t'
                                                 : ... Right-hand data type: 'bit[31:0]'
-   49 |   ustruct_t ustructD[2][2] = '{default: '{7, 8}};
+   50 |   ustruct_t ustructD[2][2] = '{default: '{7, 8}};
       |                                              ^
-%Error: t/t_assignment_compatibility_bad.v:50:19: Illegal assignment: types are not assignment compatible (IEEE 1800-2023 7.6)
+%Error: t/t_assignment_compatibility_bad.v:51:19: Illegal assignment: types are not assignment compatible (IEEE 1800-2023 7.6)
                                                 : ... note: In instance 't'
                                                 : ... Left-hand data type: 'struct $unit::ustruct_t'
                                                 : ... Right-hand data type: 'bit'
-   50 |   assign ustructC = '0;
+   51 |   assign ustructC = '0;
       |                   ^
-%Error: t/t_assignment_compatibility_bad.v:51:24: Illegal assignment: types are not assignment compatible (IEEE 1800-2023 7.6)
+%Error: t/t_assignment_compatibility_bad.v:52:24: Illegal assignment: types are not assignment compatible (IEEE 1800-2023 7.6)
                                                 : ... note: In instance 't'
                                                 : ... Left-hand data type: 'struct $unit::ustruct_t'
                                                 : ... Right-hand data type: 'bit'
-   51 |   ustruct_t ustructE = '0;   
+   52 |   ustruct_t ustructE = '0;   
       |                        ^~
-%Error: t/t_assignment_compatibility_bad.v:52:22: Illegal assignment: types are not assignment compatible (IEEE 1800-2023 7.6)
+%Error: t/t_assignment_compatibility_bad.v:53:22: Illegal assignment: types are not assignment compatible (IEEE 1800-2023 7.6)
                                                 : ... note: In instance 't'
                                                 : ... Left-hand data type: 'union $unit::uunion_t'
                                                 : ... Right-hand data type: 'bit[31:0]'
-   52 |   uunion_t uunionA = 7;
+   53 |   uunion_t uunionA = 7;
       |                      ^
-%Error: t/t_assignment_compatibility_bad.v:58:16: Illegal assignment: Unmatched array sizes (IEEE 1800-2023 7.6)
+%Error: t/t_assignment_compatibility_bad.v:59:16: Illegal assignment: Unmatched array sizes (IEEE 1800-2023 7.6)
                                                 : ... note: In instance 't'
                                                 : ... Left-hand data type: 'logic$[0:1][0:2]'
                                                 : ... Right-hand data type: 'logic$[0:1][0:1]'
-   58 |   assign rows3 = rows2;
+   59 |   assign rows3 = rows2;
       |                ^
 %Error: Exiting due to

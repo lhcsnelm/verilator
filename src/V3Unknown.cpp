@@ -272,7 +272,11 @@ class UnknownVisitor final : public VNVisitor {
                         E_UNSUPPORTED,
                         "Unsupported: RHS of ==? or !=? is fourstate but not a constant");
                 }
-                newp = new AstEq{nodep->fileline(), lhsp, rhsp};
+                if (VN_IS(nodep, EqWild)) {
+                    newp = new AstEq{nodep->fileline(), lhsp, rhsp};
+                } else {
+                    newp = new AstNeq{nodep->fileline(), lhsp, rhsp};
+                }
             } else {
                 // X or Z's become mask, ala case statements.
                 V3Number nummask{rhsp, rhsp->width()};

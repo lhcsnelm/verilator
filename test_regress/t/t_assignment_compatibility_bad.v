@@ -34,6 +34,7 @@ module t;
   bit queueB[$];
   logic unpackedF[3] = unpackedA;
   bit unpackedG[2] = unpackedB[0:1];
+  bit [1:0] unpackedH[2] = unpackedB[0:1];
 
   assign unpackedB = unpackedA;
   assign unpackedB = unpackedC;

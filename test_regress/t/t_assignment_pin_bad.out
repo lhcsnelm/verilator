@@ -3,12 +3,14 @@
    39 |   test1 i_test1 (.b);
       |                   ^
         ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
-%Error: t/t_assignment_pin_bad.v:40:19: Illegal assignment: Array element types are not equivalent (IEEE 1800-2023 6.22.2)
-                                      : ... note: In instance 't'
-                                      : ... Pin data type: 'bit$[0:1]' (2-state)
-                                      : ... Expression data type: 'logic$[0:1]' (4-state)
+%Warning-NONSTD: t/t_assignment_pin_bad.v:40:19: Assignment between arrays of 2-state and 4-state elements (IEEE 1800-2023 6.22.2, 7.6)
+                                               : ... note: In instance 't'
+                                               : ... Pin data type: 'bit$[0:1]' (2-state)
+                                               : ... Expression data type: 'logic$[0:1]' (4-state)
    40 |   test2 i_test2 (.b);
       |                   ^
+                 ... For warning description see https://verilator.org/warn/NONSTD?v=latest
+                 ... Use "/* verilator lint_off NONSTD */" and lint_on around source to disable this message.
 %Error: t/t_assignment_pin_bad.v:47:43: Inout port connection 'pad' requires constant selection indices (IEEE 1800-2023 23.3.3, 10.2, A.8.5).
                                       : ... note: In instance 't'
    47 |   inout_port indexed_array (.pad(pin_pad[1+int'(pin_index)%3]));

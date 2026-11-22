@@ -1777,14 +1777,20 @@ class ConstraintExprVisitor final : public VNVisitor {
         }
         FileLine* const fl = nodep->fileline();
         AstSFormatF* newp = nullptr;
-        if (VN_AS(nodep->fromp(), SFormatF)->name() == "%s.%s") {
+        AstSFormatF* const fromFmtp = VN_CAST(nodep->fromp(), SFormatF);
+        if (!fromFmtp) {
+            // rand_mode gated struct variable, the gate is hoisted below
+            newp = new AstSFormatF{fl, "%s." + nodep->name(), false,
+                                   nodep->fromp()->unlinkFrBack()};
+        } else if (fromFmtp->name() == "%s.%s") {
             newp = new AstSFormatF{fl, "%s.%s." + nodep->name(), false,
-                                   VN_AS(nodep->fromp(), SFormatF)->exprsp()->cloneTreePure(true)};
+                                   fromFmtp->exprsp()->cloneTreePure(true)};
             if (newp->exprsp()->nextp()->name().rfind("#x", 0) == 0)
                 newp->exprsp()->nextp()->name("%x");  //  for #x%x to %x
         } else {
-            newp = new AstSFormatF{fl, nodep->fromp()->name() + "." + nodep->name(), false,
-                                   nullptr};
+            AstNodeExpr* const exprsp
+                = fromFmtp->exprsp() ? fromFmtp->exprsp()->cloneTreePure(true) : nullptr;
+            newp = new AstSFormatF{fl, fromFmtp->name() + "." + nodep->name(), false, exprsp};
         }
         nodep->replaceWith(newp);
         VL_DO_DANGLING(pushDeletep(nodep), nodep);
@@ -4125,8 +4131,12 @@ public:
                     return depth;
                 };
                 int maxDepth = 0;
+                // A constraint is overridden by one of the same name in a derived class
+                // (IEEE 1800-2023 18.5.2); members are visited from the base class down
+                std::unordered_map<std::string, const AstConstraint*> overridingps;
                 nodep->foreachMember([&](AstClass* const, AstConstraint* const constrp) {
                     maxDepth = std::max(maxDepth, constraintDepth(constrp));
+                    overridingps[constrp->name()] = constrp;
                 });
                 AstTask* const setupAllTaskp
                     = SmtUtil::getCreateConstraintSetupFunc(nodep, m_memberMap);
@@ -4134,6 +4144,7 @@ public:
                     nodep->foreachMember(
                         [&](AstClass* const classp, AstConstraint* const constrp) {
                             if (constraintDepth(constrp) != d) return;
+                            if (overridingps[constrp->name()] != constrp) return;
                             AstTask* const taskp = VN_AS(constrp->user2p(), Task);
                             AstTaskRef* const setupTaskRefp
                                 = new AstTaskRef{constrp->fileline(), taskp};

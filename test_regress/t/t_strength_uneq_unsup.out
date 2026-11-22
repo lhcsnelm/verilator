@@ -1,0 +1,6 @@
+%Error-UNSUPPORTED: t/t_strength_uneq_unsup.v:14:29: Unsupported: Unable to resolve unequal strength specifier
+                                                   : ... note: In instance 't'
+   14 |   assign (strong0, pull1) w = a ? b : 1'bz;
+      |                             ^
+                    ... For error description see https://verilator.org/warn/UNSUPPORTED?v=latest
+%Error: Exiting due to
