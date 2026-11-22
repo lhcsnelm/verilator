@@ -170,12 +170,8 @@ arg suffix_after_space
 `line 89 "t/t_preproc.v" 0
  
 
-
-`line 91 "t/t_preproc.v" 0
-	$c("Zap(\"",bug1,"\");");;
-
-`line 92 "t/t_preproc.v" 0
-	$c("Zap(\"","bug2","\");");;
+$c("Zap(\"",bug1,"\");");;
+$c("Zap(\"","bug2","\");");;
 
 `line 94 "t/t_preproc.v" 0
 /* Define inside comment: `DEEPER and `WITHTICK */
@@ -232,18 +228,14 @@ endmodule
 
 `line 139 "t/t_preproc.v" 0
 module add1 ( input wire d1, output wire o1);
- 
-`line 140 "t/t_preproc.v" 0
-wire  tmp_d1 = d1; 
+ wire  tmp_d1 = d1; 
 `line 140 "t/t_preproc.v" 0
 wire  tmp_o1 = tmp_d1 + 1; 
 `line 140 "t/t_preproc.v" 0
 assign o1 = tmp_o1 ;   // expansion is OK
 endmodule
 module add2 ( input wire d2, output wire o2);
- 
-`line 143 "t/t_preproc.v" 0
-wire  tmp_d2 = d2; 
+ wire  tmp_d2 = d2; 
 `line 143 "t/t_preproc.v" 0
 wire  tmp_o2 = tmp_d2 + 1; 
 `line 143 "t/t_preproc.v" 0
@@ -263,8 +255,6 @@ endmodule
   
   
 
-`line 157 "t/t_preproc.v" 0
-   
 `line 157 "t/t_preproc.v" 0
    generate for (i=0; i<(3); i=i+1) begin 
 `line 157 "t/t_preproc.v" 0
@@ -506,9 +496,7 @@ $display("bits %d %d", $bits(foo), 10);
 
 
 `line 341 "t/t_preproc.v" 0
-
-`line 341 "t/t_preproc.v" 0
-   							
+ 							
 `line 341 "t/t_preproc.v" 0
          	
 `line 341 "t/t_preproc.v" 0
@@ -543,8 +531,6 @@ $display("bits %d %d", $bits(foo), 10);
 
 `line 352 "t/t_preproc.v" 0
 
-`line 352 "t/t_preproc.v" 0
-   
 `line 352 "t/t_preproc.v" 0
 /* multi		
       line 3*/		
@@ -631,9 +617,7 @@ EXP: clxx_scen
 "clxx_scen"
  
 EXP: do if (start("verilog/inc1.v", 25)) begin  message({"Blah-", "clx_scen", " end"}); end  while(0);
-
-`line 404 "t/t_preproc.v" 0
-   do 
+do 
 `line 404 "t/t_preproc.v" 0
       /* synopsys translate_off */ 
 `line 404 "t/t_preproc.v" 0
@@ -663,9 +647,7 @@ EXP: do if (start("verilog/inc1.v", 25)) begin  message({"Blah-", "clx_scen", " 
 
 
 
-
-`line 412 "t/t_preproc.v" 0
-    
+ 
 `line 412 "t/t_preproc.v" 0
     
 
@@ -895,9 +877,7 @@ module t;
    // bug915
  
 
-   initial 
-`line 595 "t/t_preproc.v" 0
-       $display("%s%s","a1","b2c3\n");
+   initial $display("%s%s","a1","b2c3\n");
 endmodule
 
 `line 598 "t/t_preproc.v" 0
@@ -1015,15 +995,11 @@ XYS_FAMILY = XYS_foo
 `line 692 "t/t_preproc.v" 0
 module pcc2_cfg;
   generate
-   
-`line 694 "t/t_preproc.v" 0
-  covergroup a @(posedge b); 
+   covergroup a @(posedge b); 
 `line 694 "t/t_preproc.v" 0
     c: coverpoint d iff ((c) === 1'b1); endgroup 
 `line 694 "t/t_preproc.v" 0
-      a u_a; 
-`line 694 "t/t_preproc.v" 0
-   initial do begin $display ("DEBUG : %s [%m]", $sformatf ("Functional coverage enabled: u_a")); end while(0);
+      a u_a; initial do begin $display ("DEBUG : %s [%m]", $sformatf ("Functional coverage enabled: u_a")); end while(0);
   endgenerate
 endmodule
 

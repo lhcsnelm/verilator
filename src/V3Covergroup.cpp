@@ -39,6 +39,7 @@
 #include <set>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 VL_DEFINE_DEBUG_FUNCTIONS;
@@ -267,6 +268,8 @@ class FunctionalCoverageVisitor final : public VNVisitor {
     AstNodeModule* m_unitp = nullptr;  // Design unit declaring the current class, outside classes
     AstClass* m_enclosingClassp = nullptr;  // Class lexically enclosing the covergroup, if any
     AstVar* m_embeddedVarp = nullptr;  // Embedded covergroup member of m_enclosingClassp, if any
+    AstVar* m_enclosingHandlep = nullptr;  // Member of the covergroup referring to its enclosing
+                                            // object, if its items use members of that class
     std::string m_covergroupName;  // Current covergroup's type name, see covergroupTypeName()
     AstFunc* m_sampleFuncp = nullptr;  // Current sample() function
     AstIf* m_cpGuardp = nullptr;  // Current coverpoint's iff guard, holding its sampling
@@ -335,6 +338,11 @@ class FunctionalCoverageVisitor final : public VNVisitor {
     std::map<AstVar*, CoverpointBins> m_cpBins;  // Runtime coverpoint -> binsof index ranges
     // Names of the bins declarations each coverpoint ignored, which binsof selects as no bins
     std::map<const AstCoverpoint*, std::vector<std::string>> m_droppedBins;
+    // Bins with a value that is not constant, e.g. of a class member, computed when the
+    // covergroup is constructed (IEEE 1800-2023 19.5)
+    std::unordered_set<const AstCoverBin*> m_runtimeValueBins;
+    // Members of the current covergroup holding its input constructor arguments
+    std::unordered_set<const AstVar*> m_constructorArgs;
     // Prefixes of the constructor temporaries of constructed bins, as coverpoint and bin names
     // alone may repeat: coverpoint 'a_' bins 'b', and coverpoint 'a' bins '_b'
     V3UniqueNames m_sizedNames{"__Vsized"};
@@ -678,10 +686,29 @@ class FunctionalCoverageVisitor final : public VNVisitor {
         return VN_CAST(binp->rangesp(), CoverWith);
     }
 
-    // True for bins whose values the covergroup constructor computes: a sized array, or bins of
-    // the values a 'with' filter keeps
-    static bool isConstructedBins(const AstCoverBin* binp) {
-        return isSizedArray(binp) || binWith(binp);
+    // True for bins whose values the covergroup constructor computes: a sized array, bins of
+    // the values a 'with' filter keeps, or of values that are not constant
+    bool isConstructedBins(const AstCoverBin* binp) const {
+        return isSizedArray(binp) || binWith(binp) || m_runtimeValueBins.count(binp);
+    }
+    // Fold the values of a bin, returning whether one is not constant but only of the members
+    // of the class enclosing the covergroup or of input constructor arguments, which the
+    // constructor reads
+    bool foldBinValues(AstCoverBin* binp) {
+        bool members = false;
+        for (AstNode* rangep = binp->rangesp(); rangep; rangep = rangep->nextp()) {
+            rangep = V3Const::constifyEdit(rangep);
+            const bool other = rangep->exists([&](const AstNode* nodep) {
+                if (const AstNodeVarRef* const refp = VN_CAST(nodep, NodeVarRef)) {
+                    members = true;
+                    return refp->varp() != m_enclosingHandlep
+                           && !m_constructorArgs.count(refp->varp());
+                }
+                return VN_IS(nodep, NodeFTaskRef);
+            });
+            if (other) return false;
+        }
+        return members;
     }
 
     // The range list of a bin's values, or of the candidates of its 'with' filter; null for all
@@ -751,6 +778,10 @@ class FunctionalCoverageVisitor final : public VNVisitor {
                 if (binp->binsType().binIsNormal()) coverpointp->user2(true);
                 dropBins(coverpointp, binp);
                 continue;
+            }
+            if (integral && !binp->isArray() && !binp->transp() && !binp->isWildcard()
+                && !binWith(binp) && foldBinValues(binp)) {
+                m_runtimeValueBins.insert(binp);
             }
             if (!isConstructedBins(binp)) continue;
             if (isSizedArray(binp) && !checkBinsArraySize(coverpointp, binp, integral)) continue;
@@ -1100,7 +1131,7 @@ class FunctionalCoverageVisitor final : public VNVisitor {
         return false;
     }
 
-    static bool coverpointHasConstructedBins(const AstCoverpoint* coverpointp) {
+    bool coverpointHasConstructedBins(const AstCoverpoint* coverpointp) const {
         for (const AstNode* const nodep : coverpointp->binspList()) {
             if (isConstructedBins(VN_AS(nodep, CoverBin))) return true;
         }
@@ -2737,15 +2768,22 @@ class FunctionalCoverageVisitor final : public VNVisitor {
             return;
         }
 
+        FileLine* const fl = binp->fileline();
         if (items.size() == 1) {
-            // Single item transition not valid (need at least 2 values for =>)
-            binp->v3error("Transition requires at least two values");
+            // Single item transition not valid (need at least 2 values for =>), but as of a
+            // repetition once
+            if (items[0]->repType() != VTransRepType::CONSEC) {
+                binp->v3error("Transition requires at least two values");
+                return;
+            }
+            addSampleStmt(new AstIf{fl, buildTransitionItemCondition(binp, items[0], exprp),
+                                    new AstAssign{fl, new AstVarRef{fl, hitVarp, VAccess::WRITE},
+                                                  new AstConst{fl, AstConst::BitTrue{}}}});
             return;
         }
         // Each value costs the generated matching a state bit and a comparison per sample, so
         // the runtime matches a longer sequence, from a table of its values
         static constexpr size_t GENERATED_MAX_VALUES = 64;
-        FileLine* const fl = binp->fileline();
         std::vector<std::string> table;
         if (items.size() > GENERATED_MAX_VALUES && transitionTable(exprp, items, table)) {
             // Every value resolved, nothing is left to report of a sequence that never completes
@@ -4547,6 +4585,7 @@ class FunctionalCoverageVisitor final : public VNVisitor {
                 UASSERT_OBJ(memberp && memberp->isClassMember(), varp,
                             "Covergroup constructor argument missing persistent member");
                 replacements.emplace(varp, memberp);
+                if (!varp->isRef() && !varp->isConstRef()) m_constructorArgs.insert(memberp);
             }
         }
         size_t expectedBindings = 0;
@@ -4643,6 +4682,7 @@ class FunctionalCoverageVisitor final : public VNVisitor {
         AstVar* const handleVarp
             = new AstVar{fl, VVarType::MEMBER, "__Vcg_enclosingp", enclDTypep};
         m_covergroupp->addMembersp(handleVarp);
+        m_enclosingHandlep = handleVarp;
         AstVar* const argumentp = new AstVar{fl, VVarType::BLOCKTEMP, "__Vcg_parentp", enclDTypep};
         argumentp->direction(VDirection::INPUT);
         argumentp->declDirection(VDirection::INPUT);
@@ -4673,6 +4713,7 @@ class FunctionalCoverageVisitor final : public VNVisitor {
         if (nodep->isCovergroup()) {
             VL_RESTORER(m_covergroupp);
             VL_RESTORER(m_embeddedVarp);
+            VL_RESTORER(m_enclosingHandlep);
             VL_RESTORER(m_sampleFuncp);
             VL_RESTORER(m_constructorp);
             VL_RESTORER_CLEAR(m_coverpoints);
@@ -4680,7 +4721,9 @@ class FunctionalCoverageVisitor final : public VNVisitor {
             VL_RESTORER_CLEAR(m_coverCrosses);
             VL_RESTORER_CLEAR(m_cgOptions);
             VL_RESTORER_CLEAR(m_covergroupName);
+            VL_RESTORER_CLEAR(m_constructorArgs);
             m_covergroupp = nodep;
+            m_enclosingHandlep = nullptr;
             m_embeddedVarp = findEmbeddedCovergroupVar();
             m_covergroupName = covergroupTypeName();
             m_sampleFuncp = nullptr;
@@ -4779,10 +4822,69 @@ class FunctionalCoverageVisitor final : public VNVisitor {
         }
     }
 
+    // Replace the transition sequences of a bin with consecutive repetitions by the sequences
+    // they are short for, 'v [*m:n]' being m to n consecutive samples of v (IEEE 1800-2023
+    // 19.5.2)
+    void expandRepetitions(AstCoverBin* binp) {
+        static constexpr uint64_t EXPANDED_MAX_VALUES = 1 << 16;
+        for (AstNode *setp = binp->transp(), *nextp; setp; setp = nextp) {
+            nextp = setp->nextp();
+            AstCoverTransSet* const transSetp = VN_AS(setp, CoverTransSet);
+            // Each sequence, as the item of each of its values
+            std::vector<std::vector<AstCoverTransItem*>> seqs{{}};
+            uint64_t values = 0;  // In all sequences
+            bool repeated = false;
+            for (AstCoverTransItem* const itemp : transSetp->itemspList()) {
+                uint64_t min = 1;
+                uint64_t max = 1;
+                if (itemp->repMinp()) {
+                    repeated = true;
+                    min = VN_AS(itemp->repMinp(), Const)->toUInt();
+                    max = itemp->repMaxp() ? VN_AS(itemp->repMaxp(), Const)->toUInt() : min;
+                }
+                // Each sequence so far continues with each count of the item
+                const uint64_t span = max - min + 1;
+                if (max <= EXPANDED_MAX_VALUES) {
+                    values = values * span + seqs.size() * (min + max) * span / 2;
+                }
+                if (max > EXPANDED_MAX_VALUES || values > EXPANDED_MAX_VALUES) {
+                    itemp->v3warn(E_UNSUPPORTED, "Unsupported: transition repetition of more than "
+                                                     << EXPANDED_MAX_VALUES
+                                                     << " values in all its sequences");
+                    repeated = false;
+                    break;
+                }
+                std::vector<std::vector<AstCoverTransItem*>> longer;
+                for (const auto& seq : seqs) {
+                    for (uint64_t count = min; count <= max; ++count) {
+                        longer.push_back(seq);
+                        longer.back().insert(longer.back().end(), count, itemp);
+                    }
+                }
+                seqs = std::move(longer);
+            }
+            if (!repeated) continue;
+            for (const auto& seq : seqs) {
+                AstCoverTransItem* itemsp = nullptr;
+                for (const AstCoverTransItem* const itemp : seq) {
+                    // Of a set with a repetition, so may be alone (see
+                    // generateSingleTransitionCode)
+                    itemsp = AstNode::addNext(
+                        itemsp,
+                        new AstCoverTransItem{itemp->fileline(), itemp->valuesp()->cloneTree(true),
+                                              VTransRepType::CONSEC});
+                }
+                transSetp->addHereThisAsNext(new AstCoverTransSet{transSetp->fileline(), itemsp});
+            }
+            VL_DO_DANGLING(pushDeletep(transSetp->unlinkFrBack()), transSetp);
+        }
+    }
+
     void visit(AstCoverpoint* nodep) override {
         UINFO(9, "Found coverpoint: " << nodep->name());
         m_coverpoints.push_back(nodep);
         m_coverpointMap.emplace(nodep->name(), nodep);
+        for (AstNode* const binp : nodep->binspList()) expandRepetitions(VN_AS(binp, CoverBin));
         iterateChildren(nodep);
     }
 

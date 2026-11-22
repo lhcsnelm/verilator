@@ -7481,9 +7481,20 @@ trans_range_listNonExpr<nodep>:  // IEEE: trans_range_list excluding a single ex
         // A range, list, or repetition distinguishes this from a parenthesized set expression.
                 covergroup_range_listNonExpr            { $$ = new AstCoverTransItem{$<fl>1, $1, VTransRepType::NONE}; }
         |       trans_item yP_BRASTAR cgexpr ']'
-                        { $$ = nullptr; BBCOVERIGN($<fl>2, "Unsupported: '[*]' in cover transition"); DEL($1, $3); }
+                        {
+                            AstCoverTransItem* const itemp
+                                = new AstCoverTransItem{$<fl>1, $1, VTransRepType::CONSEC};
+                            itemp->repMinp($3);
+                            $$ = itemp;
+                        }
         |       trans_item yP_BRASTAR cgexpr ':' cgexpr ']'
-                        { $$ = nullptr; BBCOVERIGN($<fl>2, "Unsupported: '[*]' in cover transition"); DEL($1, $3, $5); }
+                        {
+                            AstCoverTransItem* const itemp
+                                = new AstCoverTransItem{$<fl>1, $1, VTransRepType::CONSEC};
+                            itemp->repMinp($3);
+                            itemp->repMaxp($5);
+                            $$ = itemp;
+                        }
         |       trans_item yP_BRAMINUSGT cgexpr ']'
                         {
                             BBCOVERIGN($<fl>2, "Unsupported: '[->' in cover transition");

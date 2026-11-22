@@ -361,6 +361,21 @@ class DynScopeVisitor final : public VNVisitor {
                 || m_afterTimingControl);
     }
 
+    // Whether a 'disable fork' follows the statement in its list, so kills the processes the
+    // statement forks before the enclosing process continues past it, unless a statement
+    // between may jump past it
+    static bool disabledAfter(const AstNode* nodep) {
+        for (const AstNode* stmtp = nodep->nextp(); stmtp; stmtp = stmtp->nextp()) {
+            if (VN_IS(stmtp, DisableFork)) return true;
+            if (stmtp->exists([](const AstNode* subp) {
+                    return VN_IS(subp, JumpGo) || VN_IS(subp, Disable);
+                })) {
+                return false;
+            }
+        }
+        return false;
+    }
+
     // VISITORS
     void visit(AstNodeModule* nodep) override {
         VL_RESTORER(m_modp);
@@ -388,9 +403,8 @@ class DynScopeVisitor final : public VNVisitor {
         VL_RESTORER(m_survivingForkDepth);
         if (!nodep->joinType().join()) {
             ++m_forkDepth;
-            // A following 'disable fork' kills the children before the enclosing process
-            // continues, so they cannot outlive the task
-            if (!VN_IS(nodep->nextp(), DisableFork)) ++m_survivingForkDepth;
+            // Children killed by a following 'disable fork' cannot outlive the task
+            if (!disabledAfter(nodep)) ++m_survivingForkDepth;
         }
 
         const bool oldAfterTimingControl = m_afterTimingControl;

@@ -1,0 +1,14 @@
+%Error: t/t_covergroup_trans_rep_bad.v:12:20: Transition repetition counts must be positive constants, the maximum not less than the minimum (IEEE 1800-2023 19.5.2)
+                                            : ... note: In instance 't'
+   12 |       bins zero = (1 [*0]);
+      |                    ^
+        ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
+%Error: t/t_covergroup_trans_rep_bad.v:13:21: Transition repetition counts must be positive constants, the maximum not less than the minimum (IEEE 1800-2023 19.5.2)
+                                            : ... note: In instance 't'
+   13 |       bins order = (1 [*3:2]);
+      |                     ^
+%Error: t/t_covergroup_trans_rep_bad.v:14:24: Transition repetition counts must be positive constants, the maximum not less than the minimum (IEEE 1800-2023 19.5.2)
+                                            : ... note: In instance 't'
+   14 |       bins variable = (1 [*count]);
+      |                        ^
+%Error: Exiting due to

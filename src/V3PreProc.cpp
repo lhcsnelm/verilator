@@ -647,10 +647,18 @@ void V3PreProcImp::unputDefrefString(const string& strg) {
 }
 
 string V3PreProcImp::trimWhitespace(const string& strg, bool trailing) {
-    // Remove leading whitespace
+    // Remove leading whitespace, including line continuations
     string out = strg;
     string::size_type leadspace = 0;
-    while (out.length() > leadspace && std::isspace(out[leadspace])) ++leadspace;
+    while (true) {
+        if (out.length() > leadspace && std::isspace(out[leadspace])) {
+            ++leadspace;
+        } else if (out.compare(leadspace, 2, "\\\n") == 0) {
+            leadspace += 2;
+        } else {
+            break;
+        }
+    }
     if (leadspace) out.erase(0, leadspace);
     // Remove trailing whitespace
     if (trailing) {

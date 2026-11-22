@@ -14,7 +14,7 @@ module t;
   covergroup cg;
     cp1: coverpoint cp_expr {
       bins t_double = (1, 2);  // Error: requires at least two values
-      bins t_repeat = (1 [* 2]);  // Error: unsupported repetition operator
+      bins t_repeat = (1 [-> 2:3]);  // Error: unsupported repetition operator
     }
     cp_flag: coverpoint flag;
     // The unsupported repetition leaves no last transition value for cross selection.

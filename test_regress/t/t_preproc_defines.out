@@ -218,15 +218,10 @@ arg suffix_after_space
 `line 89 "t/t_preproc.v" 0
  
 
-`define zap(which) \
-	$c("Zap(\"",which,"\");");
+`define zap(which) $c("Zap(\"",which,"\");");
 `line 91 "t/t_preproc.v" 0
-
-`line 91 "t/t_preproc.v" 0
-	$c("Zap(\"",bug1,"\");");;
-
-`line 92 "t/t_preproc.v" 0
-	$c("Zap(\"","bug2","\");");;
+$c("Zap(\"",bug1,"\");");;
+$c("Zap(\"","bug2","\");");;
 
 `line 94 "t/t_preproc.v" 0
  
@@ -296,26 +291,21 @@ endmodule
 
 
 
-`define ADD_UP(a,c) \
-wire  tmp_``a = a; \
+`define ADD_UP(a,c) wire  tmp_``a = a; \
 wire  tmp_``c = tmp_``a + 1; \
 assign c = tmp_``c ;
 `line 139 "t/t_preproc.v" 0
 
 `line 139 "t/t_preproc.v" 0
 module add1 ( input wire d1, output wire o1);
- 
-`line 140 "t/t_preproc.v" 0
-wire  tmp_d1 = d1; 
+ wire  tmp_d1 = d1; 
 `line 140 "t/t_preproc.v" 0
 wire  tmp_o1 = tmp_d1 + 1; 
 `line 140 "t/t_preproc.v" 0
 assign o1 = tmp_o1 ;    
 endmodule
 module add2 ( input wire d2, output wire o2);
- 
-`line 143 "t/t_preproc.v" 0
-wire  tmp_d2 = d2; 
+ wire  tmp_d2 = d2; 
 `line 143 "t/t_preproc.v" 0
 wire  tmp_o2 = tmp_d2 + 1; 
 `line 143 "t/t_preproc.v" 0
@@ -328,8 +318,7 @@ endmodule
 
 
 
-`define check(mod, width, flopname, gate, path) \
-   generate for (i=0; i<(width); i=i+1) begin \
+`define check(mod, width, flopname, gate, path) generate for (i=0; i<(width); i=i+1) begin \
       psl cover {  path.d[i] & ~path.q[i] & !path.cond & (gate)} report `"fondNoRise: mod.flopname`"; \
       psl cover { ~path.d[i] &  path.q[i] & !path.cond & (gate)} report `"fondNoFall: mod.flopname`"; \
    end endgenerate
@@ -346,8 +335,6 @@ endmodule
   
 `define CK_fr (`MF.alive & `MF.alive_m1)
 
-`line 157 "t/t_preproc.v" 0
-   
 `line 157 "t/t_preproc.v" 0
    generate for (i=0; i<(3); i=i+1) begin 
 `line 157 "t/t_preproc.v" 0
@@ -635,8 +622,7 @@ $display("bits %d %d", $bits(foo), 10);
 
 
 
-`define FC_INV3(out, in) \
-  `ifdef DC							\
+`define FC_INV3(out, in) `ifdef DC							\
      cell \inv_``out <$typeof(out)> (.a(<in>), .o(<out>));	\
       /* multi-line comment					\
 	 multi-line comment */					\
@@ -649,9 +635,7 @@ $display("bits %d %d", $bits(foo), 10);
 `line 341 "t/t_preproc.v" 0
 
 `line 341 "t/t_preproc.v" 0
-
-`line 341 "t/t_preproc.v" 0
-   							
+ 							
 `line 341 "t/t_preproc.v" 0
          	
 `line 341 "t/t_preproc.v" 0
@@ -682,15 +666,12 @@ $display("bits %d %d", $bits(foo), 10);
 
 
 `define bug202( i 	\
-     ) \
-   /* multi		\
+     ) /* multi		\
       line 3*/		\
    def i		\
 
 `line 352 "t/t_preproc.v" 0
 
-`line 352 "t/t_preproc.v" 0
-   
 `line 352 "t/t_preproc.v" 0
  		
 `line 352 "t/t_preproc.v" 0
@@ -786,8 +767,7 @@ LINE
 
 
 
-`define msg_fatal(log, msg) \
-   do \
+`define msg_fatal(log, msg) do \
       /* synopsys translate_off */ \
 `ifdef NEVER \
   `error "WTF" \
@@ -816,9 +796,7 @@ EXP: clxx_scen
 `define mf(clx) `msg_fatal(this.log, {"Blah-", `MSG_MACRO_TO_STRING(`msg_scen_(clx)), " end"});
 `line 403 "t/t_preproc.v" 0
 EXP: do if (start("verilog/inc1.v", 25)) begin  message({"Blah-", "clx_scen", " end"}); end  while(0);
-
-`line 404 "t/t_preproc.v" 0
-   do 
+do 
 `line 404 "t/t_preproc.v" 0
         
 `line 404 "t/t_preproc.v" 0
@@ -848,14 +826,11 @@ EXP: do if (start("verilog/inc1.v", 25)) begin  message({"Blah-", "clx_scen", " 
 
 
 
-`define makedefine(name) \
-   `define def_``name   This is name \
+`define makedefine(name) `define def_``name   This is name \
    `define def_``name``_2 This is name``_2 \
 
 `line 412 "t/t_preproc.v" 0
-
-`line 412 "t/t_preproc.v" 0
-    
+ 
 `line 412 "t/t_preproc.v" 0
 `define def_fooed This is fooed
 `line 412 "t/t_preproc.v" 0
@@ -1226,12 +1201,9 @@ module t;
     
  
 
-`define BUG915(a,b,c) \
-       $display("%s%s",a,`"b``c``\n`")
+`define BUG915(a,b,c) $display("%s%s",a,`"b``c``\n`")
 `line 595 "t/t_preproc.v" 0
-   initial 
-`line 595 "t/t_preproc.v" 0
-       $display("%s%s","a1","b2c3\n");
+   initial $display("%s%s","a1","b2c3\n");
 endmodule
 
 `line 598 "t/t_preproc.v" 0
@@ -1374,15 +1346,13 @@ XYS_FAMILY = XYS_foo
 `line 685 "t/t_preproc.v" 0
  
 
-`define svfcov_new(GRP) \
-   initial do begin `dbg_hdl(UVM_LOW, (`"Functional coverage enabled: GRP`")); end while(0)
+`define svfcov_new(GRP) initial do begin `dbg_hdl(UVM_LOW, (`"Functional coverage enabled: GRP`")); end while(0)
 `line 687 "t/t_preproc.v" 0
  
 
 
 
-`define simple_svfcov_clk(LBL, CLK, RST, ARG) \
-  covergroup LBL @(posedge CLK); \
+`define simple_svfcov_clk(LBL, CLK, RST, ARG) covergroup LBL @(posedge CLK); \
     c: coverpoint ARG iff ((RST) === 1'b1); endgroup \
       LBL u_``LBL; `svfcov_new(u_``LBL)
 `line 692 "t/t_preproc.v" 0
@@ -1390,15 +1360,11 @@ XYS_FAMILY = XYS_foo
 `line 692 "t/t_preproc.v" 0
 module pcc2_cfg;
   generate
-   
-`line 694 "t/t_preproc.v" 0
-  covergroup a @(posedge b); 
+   covergroup a @(posedge b); 
 `line 694 "t/t_preproc.v" 0
     c: coverpoint d iff ((c) === 1'b1); endgroup 
 `line 694 "t/t_preproc.v" 0
-      a u_a; 
-`line 694 "t/t_preproc.v" 0
-   initial do begin $display ("DEBUG : %s [%m]", $sformatf ("Functional coverage enabled: u_a")); end while(0);
+      a u_a; initial do begin $display ("DEBUG : %s [%m]", $sformatf ("Functional coverage enabled: u_a")); end while(0);
   endgenerate
 endmodule
 
@@ -1516,8 +1482,7 @@ string boo = "testtest x,y xquux(test)";
 
 
 
-`define uvm_imp_decl(SFX) \
-class uvm_master_imp``SFX  \
+`define uvm_imp_decl(SFX) class uvm_master_imp``SFX  \
   `uvm_a(SFX, RSP, t) \
   \
   `uvm_a(SFX, REQ, t) \

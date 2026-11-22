@@ -1,0 +1,6 @@
+%Error-UNSUPPORTED: t/t_covergroup_trans_rep_unsup.v:10:19: Unsupported: transition repetition of more than 65536 values in all its sequences
+                                                          : ... note: In instance 't'
+   10 |       bins big = (1 [*1:1000] => 2 [*1:1000]);
+      |                   ^
+                    ... For error description see https://verilator.org/warn/UNSUPPORTED?v=latest
+%Error: Exiting due to

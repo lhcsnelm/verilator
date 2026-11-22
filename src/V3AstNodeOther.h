@@ -1299,6 +1299,7 @@ public:
     ASTGEN_MEMBERS_AstCoverTransItem;
     void dump(std::ostream& str) const override;
     void dumpJson(std::ostream& str) const override;
+    VTransRepType repType() const { return m_repType; }
 };
 class AstCoverTransSet final : public AstNode {
     // Represents a transition set: value1 => value2 => value3
@@ -3417,6 +3418,8 @@ public:
     void hasRandVarsUpdate(bool flag) { m_hasRandVarsUpdate = flag; }
     bool isCovergroup() const { return m_covergroup; }
     void isCovergroup(bool flag) { m_covergroup = flag; }
+    // Name of a covergroup's built-in method that a formal argument's member has the name of
+    static string covergroupMethodName(const string& name) { return "__Vcg_" + name; }
     bool isExtended() const { return m_extended; }
     void isExtended(bool flag) { m_extended = flag; }
     bool implChecksDeferred() const { return m_implChecksDeferred; }

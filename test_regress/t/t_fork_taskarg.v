@@ -174,6 +174,23 @@ class Driver;
     join
   endtask
 
+  // Likewise killed only after a further delay
+  task automatic set_int_before_kill(output int value);
+    fork
+      begin : iso
+        fork
+          begin
+            #1;
+            value = 92;
+          end
+          #10;
+        join_any
+        #0;
+        disable fork;
+      end : iso
+    join
+  endtask
+
   task automatic run_non_class;
     int value;
 
@@ -189,6 +206,8 @@ class Driver;
     int value;
     set_int_after_delay(value);
     `checkd(value, 91);
+    set_int_before_kill(value);
+    `checkd(value, 92);
   endtask
 endclass
 

@@ -9,16 +9,15 @@
 //
 //*************************************************************************
 
-#include <stdlib.h>
-
 // Valid C, but not C++, which does not convert void* implicitly
 int dpic_sum(int n) {
-    int* valuesp = malloc(n * sizeof(int));
+    int values[8];
+    void* voidp = values;
+    int* valuesp = voidp;
     int sum = 0;
     for (int i = 0; i < n; ++i) {
         valuesp[i] = i;
         sum += valuesp[i];
     }
-    free(valuesp);
     return sum;
 }

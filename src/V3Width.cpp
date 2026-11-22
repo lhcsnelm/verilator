@@ -2652,6 +2652,23 @@ class WidthVisitor final : public VNVisitor {
     void visit(AstCoverTransSet* nodep) override { userIterateAndNext(nodep->itemsp(), m_vup); }
     void visit(AstCoverTransItem* nodep) override {
         widthCovergroupRanges(nodep->valuesp(), m_vup ? m_vup->dtypep()->width() : 0);
+        if (!nodep->repMinp()) return;
+        // Consecutive repetition, which V3Covergroup expands by its constant counts
+        userIterate(nodep->repMinp(), WidthVP{SELF, BOTH}.p());
+        V3Const::constifyParamsNoWarnEdit(nodep->repMinp());  // repMinp may change
+        const AstConst* const minp = VN_CAST(nodep->repMinp(), Const);
+        const AstConst* maxp = minp;
+        if (nodep->repMaxp()) {
+            userIterate(nodep->repMaxp(), WidthVP{SELF, BOTH}.p());
+            V3Const::constifyParamsNoWarnEdit(nodep->repMaxp());  // repMaxp may change
+            maxp = VN_CAST(nodep->repMaxp(), Const);
+        }
+        if (!minp || !maxp || minp->toSInt() < 1 || maxp->toSInt() < minp->toSInt()) {
+            nodep->v3error("Transition repetition counts must be positive constants, the maximum"
+                           " not less than the minimum (IEEE 1800-2023 19.5.2)");
+            pushDeletep(nodep->repMinp()->unlinkFrBack());
+            if (nodep->repMaxp()) pushDeletep(nodep->repMaxp()->unlinkFrBack());
+        }
     }
     void visit(AstPow* nodep) override {
         // Pow is special, output sign only depends on LHS sign, but
@@ -6226,8 +6243,12 @@ class WidthVisitor final : public VNVisitor {
                     }
                 }
             }
-            if (AstNodeFTask* const ftaskp
-                = VN_CAST(m_memberMap.findMember(classp, nodep->name()), NodeFTask)) {
+            AstNode* memberp = m_memberMap.findMember(classp, nodep->name());
+            if (classp->isCovergroup() && VN_IS(memberp, Var)) {
+                memberp = m_memberMap.findMember(
+                    classp, AstClass::covergroupMethodName(nodep->name()));
+            }
+            if (AstNodeFTask* const ftaskp = VN_CAST(memberp, NodeFTask)) {
                 userIterate(ftaskp, nullptr);
                 if (ftaskp->isStatic()) {
                     AstArg* const argsp = nodep->argsp();

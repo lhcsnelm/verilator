@@ -97,4 +97,20 @@ module t;
     join
   endtask
 
+  // Nested fork is not killed, when a jump skips the 'disable fork'
+  task automatic t4(output int o4, input bit skip);
+    fork
+      begin : blk
+        fork
+          begin
+            #1;
+            o4 = 0;
+          end
+        join_any
+        if (skip) disable blk;
+        disable fork;
+      end
+    join
+  endtask
+
 endmodule

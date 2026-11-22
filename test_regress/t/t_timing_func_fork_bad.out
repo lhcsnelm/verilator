@@ -51,4 +51,8 @@
                                         : ... note: In instance 't'
    93 |             o3 = 0;
       |             ^~
+%Error: t/t_timing_func_fork_bad.v:107:13: Writing to an output automatic variable of a task after a timing control is not allowed (IEEE 1800-2023 13.2.2)
+                                         : ... note: In instance 't'
+  107 |             o4 = 0;
+      |             ^~
 %Error: Exiting due to

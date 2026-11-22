@@ -1002,6 +1002,16 @@ class ParamProcessor final {
         V3Stats::addStatSum("IfaceCapture, Ledger fixups in V3Param", fixedCount);
     }
 
+    // Whether a module has an interface port, which deepCloneModule relinks in a clone of the
+    // module itself, not of its unaltered copy
+    static bool hasIfacePort(const AstNodeModule* modp) {
+        for (const AstNode* stmtp = modp->stmtsp(); stmtp; stmtp = stmtp->nextp()) {
+            const AstVar* const varp = VN_CAST(stmtp, Var);
+            if (varp && varp->isIfaceRef()) return true;
+        }
+        return false;
+    }
+
     // Return true on success, false on error
     bool deepCloneModule(AstNodeModule* srcModp, AstNode* ifErrorp, AstPin* paramsp,
                          const string& newname, const IfaceRefRefs& ifaceRefRefs) {
@@ -1505,7 +1515,7 @@ class ParamProcessor final {
         });
     }
 
-    const AstVar* unalteredParam(const AstVar* varp) const {
+    AstVar* unalteredParam(AstVar* varp) const {
         // A parameter as declared, as a template used as its default specialization is widthed
         const auto it = m_unalteredParams.find(varp);
         return it == m_unalteredParams.end() ? varp : VN_AS(it->second, Var);
@@ -1524,7 +1534,8 @@ class ParamProcessor final {
             VL_DO_DANGLING(oldValuep->deleteTree(), oldValuep);
         }
         cloneVarp->valuep(valuep->cloneTree(false));
-        if (AstNodeDType* const origDTypep = modvarp->subDTypep()) {
+        // The type as declared, as the template may be widthed as its default specialization
+        if (AstNodeDType* const origDTypep = unalteredParam(modvarp)->subDTypep()) {
             // Attach clone under cloneVarp so the root has a back pointer.
             if (cloneVarp->childDTypep())
                 cloneVarp->childDTypep()->unlinkFrBack()->deleteTree();
@@ -2199,10 +2210,11 @@ class ParamProcessor final {
             UINFO(8, "Cell parameters all match original values, skipping expansion.");
             // If it's the first use of the default instance, create a copy and store it in user3p.
             // user3p will also be used to check if the default instance is used.
-            if (!srcModp->user3p() && (VN_IS(srcModp, Class) || VN_IS(srcModp, Iface))) {
+            if (!srcModp->user3p()
+                && (VN_IS(srcModp, Class) || VN_IS(srcModp, Iface) || !hasIfacePort(srcModp))) {
                 AstNodeModule* nodeCopyp = srcModp->cloneTree(false);
-                // It is a temporary copy of the original class node, stored in order to create
-                // another instances. It is needed only during class instantiation.
+                // It is a temporary copy of the original node, stored in order to create other
+                // instances, as the original is widthed as the default instance.
                 UINFO(8, "    Created clone " << nodeCopyp);
                 m_deleter.pushDeletep(nodeCopyp);  // nodeCopyp used past here
                 srcModp->user3p(nodeCopyp);

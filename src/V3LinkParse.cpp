@@ -1377,9 +1377,14 @@ class LinkParseVisitor final : public VNVisitor {
             nodep->addMembersp(funcp);
         }
 
-        // IEEE: function void start(), void stop()
+        // IEEE: function void start(), void stop().  A formal argument, visible only within the
+        // covergroup, may have the same name, but is a member of that name, so the method then
+        // takes another.
         for (const string& name : {"start"s, "stop"s}) {
-            AstFunc* const funcp = new AstFunc{nodep->fileline(), name};
+            const bool argName
+                = nodep->exists([&](const AstVar* varp) { return varp->name() == name; });
+            AstFunc* const funcp = new AstFunc{
+                nodep->fileline(), argName ? AstClass::covergroupMethodName(name) : name};
             funcp->classMethod(true);
             nodep->addMembersp(funcp);
         }
