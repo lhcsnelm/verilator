@@ -789,6 +789,18 @@ class LinkCellsVisitor final : public VNVisitor {
         VL_DO_DANGLING(pushDeletep(nodep->unlinkFrBack()), nodep);
     }
 
+    void visit(AstGenIf* nodep) override {
+        // A bind applies only if its generate block is elaborated (IEEE 1800-2023 23.11), known
+        // here when the condition is constant, as of a macro; otherwise it applies regardless
+        if (const AstConst* const constp = VN_CAST(nodep->condp(), Const)) {
+            std::vector<AstBind*> bindps;
+            if (AstNode* const deadp = constp->isZero() ? nodep->thensp() : nodep->elsesp()) {
+                deadp->foreachAndNext([&](AstBind* bindp) { bindps.push_back(bindp); });
+            }
+            for (AstBind* const bindp : bindps) pushDeletep(bindp->unlinkFrBack());
+        }
+        iterateChildren(nodep);
+    }
     void visit(AstGenFor* nodep) override {
         VL_RESTORER(m_inGenFor);
         m_inGenFor = true;

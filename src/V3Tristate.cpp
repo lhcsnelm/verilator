@@ -2128,6 +2128,13 @@ class TristateVisitor final : public TristateBaseVisitor {
     void visit(AstAssignW* nodep) override { visitAssign(nodep); }
     void visit(AstAssign* nodep) override { visitAssign(nodep); }
     void visit(AstAssignDly* nodep) override { visitAssign(nodep); }
+    // A force overrides the drivers of a net rather than driving it (IEEE 1800-2023 10.6.2),
+    // which V3Force does on the net these drivers resolve to
+    void visit(AstAssignForce* nodep) override {
+        iterateAndNextNull(nodep->rhsp());
+        checkUnhandled(nodep);  // A forced z
+    }
+    void visit(AstRelease* nodep) override {}
 
     void visit(AstNodeProcedure* nodep) override {
         VL_RESTORER(m_procedurep);

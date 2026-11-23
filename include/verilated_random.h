@@ -497,6 +497,9 @@ public:
     void set_var_disabled(const std::string& name) { m_disabledVars.insert(name); }
     // Clear disabled state for a variable
     void clear_var_disabled(const std::string& name) { m_disabledVars.erase(name); }
+    /// Forget the variables registered under names starting with 'prefix', as of the elements
+    /// of an array of objects, which may have changed since registered
+    void forget_vars(const std::string& prefix);
 
     // ---  write_var to register variables  ---
     // Register scalar variable (non-struct, basic type)

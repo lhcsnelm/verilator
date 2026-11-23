@@ -1816,6 +1816,13 @@ void VlRandomizer::clearConstraints() {
     // Keep m_vars for class member randomization
 }
 
+void VlRandomizer::forget_vars(const std::string& prefix) {
+    auto it = m_vars.lower_bound(prefix);
+    while (it != m_vars.end() && it->first.compare(0, prefix.size(), prefix) == 0) {
+        it = m_vars.erase(it);
+    }
+}
+
 void VlRandomizer::clearAll() {
     clearConstraints();
     m_vars.clear();

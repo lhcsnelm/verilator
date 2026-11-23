@@ -773,6 +773,20 @@ private:
     }
 
 public:
+    // The symbol table of the nearest instance above a cell boundary over 'lookupSymp' that
+    // declares variable 'ident', and whose module's name then names it, else nullptr
+    static VSymEnt* findUpwardVarScope(VSymEnt* lookupSymp, const string& ident) {
+        bool crossedCell = false;  // Crossed a cell boundary, as findDotted
+        while ((lookupSymp = lookupSymp->parentp())) {
+            const AstNode* const nodep = lookupSymp->nodep();
+            if (VN_IS(nodep, Cell) || VN_IS(nodep, CellInline)) crossedCell = true;
+            if (const VSymEnt* const foundp = lookupSymp->findIdFlat(ident)) {
+                const bool named = VN_IS(nodep, Cell) || VN_IS(nodep, Module);
+                return crossedCell && named && VN_IS(foundp->nodep(), Var) ? lookupSymp : nullptr;
+            }
+        }
+        return nullptr;
+    }
     VSymEnt* findDotted(FileLine* refLocationp, VSymEnt* lookupSymp, const string& dotname,
                         string& baddot, VSymEnt*& okSymp, bool firstId) {
         // Given a dotted hierarchy name, return where in scope it is
@@ -3363,6 +3377,7 @@ class LinkDotResolveVisitor final : public VNVisitor {
     const AstPin* m_pinp = nullptr;  // Current pin
     AstNodeModule* m_modp = nullptr;  // Current module
     AstGenBlock* m_genBlockp = nullptr;  // Current generate block
+    bool m_inDeadGen = false;  // Under a generate if branch its constant condition never takes
     AstNodeFTask* m_ftaskp = nullptr;  // Current function/task
     AstMethodCall* m_randMethodCallp = nullptr;  // Current randomize() method call
     int m_modportNum = 0;  // Uniqueify modport numbers
@@ -4790,6 +4805,28 @@ class LinkDotResolveVisitor final : public VNVisitor {
             if (allowScope) {
                 foundp = m_statep->findDotted(nodep->fileline(), m_ds.m_dotSymp, nodep->name(),
                                               baddot, okSymp, first);  // Maybe nullptr
+                // A variable of an enclosing instance, by an upward reference as other tools
+                // allow, is named through its module's name (IEEE 1800-2023 23.8)
+                VSymEnt* const upSymp
+                    = !foundp && first && m_ds.m_dotp && m_ds.m_dotText.empty()
+                          ? LinkDotState::findUpwardVarScope(m_ds.m_dotSymp, nodep->name())
+                          : nullptr;
+                if (upSymp) {
+                    const AstCell* const cellp = VN_CAST(upSymp->nodep(), Cell);
+                    m_ds.m_dotText = cellp ? cellp->modp()->origName()
+                                           : VN_AS(upSymp->nodep(), NodeModule)->origName();
+                    m_ds.m_dotSymp = upSymp;
+                    foundp = upSymp->findIdFlat(nodep->name());
+                    if (m_statep->forPrimary()) {
+                        nodep->v3warn(NONSTD, "Non-standard upward reference to variable "
+                                                  << nodep->prettyNameQ()
+                                                  << " of an enclosing instance (IEEE 1800-2023 "
+                                                     "23.8)\n"
+                                                  << nodep->warnMore() << "... Suggest use '"
+                                                  << m_ds.m_dotText << "." << nodep->prettyName()
+                                                  << "'");
+                    }
+                }
             } else if (first) {
                 foundp = m_ds.m_dotSymp->findIdFallback(nodep->name());
             } else {
@@ -5291,7 +5328,7 @@ class LinkDotResolveVisitor final : public VNVisitor {
                                 "Can't find definition of "
                                 << expectWhat << ": " << nodep->prettyNameQ() << '\n'
                                 << (suggest.empty() ? "" : nodep->warnMore() + suggest));
-                        } else {
+                        } else if (!m_inDeadGen) {
                             nodep->v3error(
                                 "Can't find definition of "
                                 << (!baddot.empty() ? AstNode::prettyNameQ(baddot)
@@ -6101,6 +6138,22 @@ class LinkDotResolveVisitor final : public VNVisitor {
         // checkNoDot not appropriate, can be under a dot
         LINKDOT_VISIT_START();
         iterateChildren(nodep);
+    }
+    void visit(AstGenIf* nodep) override {
+        // A branch a constant condition, as of a macro, does not take is never elaborated (IEEE
+        // 1800-2023 27.5), so a hierarchical name in it may refer to what does not exist; V3Param
+        // deletes the branch
+        LINKDOT_VISIT_START();
+        const AstConst* const constp = VN_CAST(nodep->condp(), Const);
+        iterateAndNextNull(nodep->condp());
+        {
+            VL_RESTORER(m_inDeadGen);
+            m_inDeadGen |= constp && constp->isZero();
+            iterateAndNextNull(nodep->thensp());
+        }
+        VL_RESTORER(m_inDeadGen);
+        m_inDeadGen |= constp && !constp->isZero();
+        iterateAndNextNull(nodep->elsesp());
     }
     void visit(AstGenBlock* nodep) override {
         LINKDOT_VISIT_START();

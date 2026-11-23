@@ -1,5 +1,7 @@
-%Error: t/t_param_up_bad.v:14:18: Can't find definition of scope/variable: 'bar'
+%Warning-NONSTD: t/t_param_up_bad.v:14:18: Non-standard upward reference to variable 'bar' of an enclosing instance (IEEE 1800-2023 23.8)
+                                         : ... Suggest use 'parent.bar'
    14 |   assign a_bad = bar.foo;
       |                  ^~~
-        ... See the manual at https://verilator.org/verilator_doc.html?v=latest for more assistance.
+                 ... For warning description see https://verilator.org/warn/NONSTD?v=latest
+                 ... Use "/* verilator lint_off NONSTD */" and lint_on around source to disable this message.
 %Error: Exiting due to

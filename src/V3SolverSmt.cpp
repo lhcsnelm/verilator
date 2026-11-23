@@ -1041,8 +1041,11 @@ class ConstraintExprVisitor final : public VNVisitor {
         varp->user3(true);
         AstBegin* initp = m_inlineInitBlockp;
         if (!initp) {
-            AstNodeFTask* const taskp = VN_AS(m_memberMap.findMember(varClassp, "new"), NodeFTask);
-            UASSERT_OBJ(taskp, varClassp, "No new() in class");
+            // On each randomize(), as elements may change, e.g. in pre_randomize(); of the
+            // caller if a base class declaring the array has none, as in getInitp()
+            AstNodeFTask* taskp = VN_AS(m_memberMap.findMember(varClassp, "randomize"), NodeFTask);
+            if (!taskp) taskp = m_memberrefInitTaskp;
+            UASSERT_OBJ(taskp, varClassp, "No randomize() in class");
             initp = newInitBlockp(taskp);
         }
         // At the beginning, so declared before referenced
@@ -1059,6 +1062,12 @@ class ConstraintExprVisitor final : public VNVisitor {
             initp->addStmtsp(firstp->makeStmt());
             loopp->addStmtsp(nextp->makeStmt());
         }
+        // Register the elements of now, not of a previous randomize()
+        AstCMethodHard* const forgetp = new AstCMethodHard{
+            fl, new AstVarRef{fl, VN_AS(m_genp->user2p(), NodeModule), m_genp, VAccess::READWRITE},
+            VCMethod::RANDOMIZER_FORGET_VARS, new AstConst{fl, AstConst::String{}, smtName + "."}};
+        forgetp->dtypeSetVoid();
+        initp->addStmtsp(forgetp->makeStmt());
         initp->addStmtsp(stmtsp);
     }
 
@@ -4053,7 +4062,13 @@ class SolverSmtLowering final : public V3SolverLowering {
             });
             UASSERT_OBJ(!(hasRegistration && foundClearConstraints), stmtp,
                         "Block containing both variable registration and constraint clearing");
-            if (hasRegistration) targetp->addStmtsp(stmtp->cloneTree(false));
+            // A block copied already from a nearer ancestor, under its unique name, again would
+            // declare its variables twice
+            const AstBegin* const beginp = VN_CAST(stmtp, Begin);
+            const bool copied = beginp && targetp->exists([&](const AstBegin* otherp) {
+                return otherp->name() == beginp->name();
+            });
+            if (hasRegistration && !copied) targetp->addStmtsp(stmtp->cloneTree(false));
             if (foundClearConstraints) break;
         }
     }

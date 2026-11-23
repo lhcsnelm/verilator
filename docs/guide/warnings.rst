@@ -1691,7 +1691,11 @@ List Of Warnings
    types differ only in being 2-state or 4-state, such as a ``bit [7:0]``
    queue assigned from a ``logic [7:0]`` queue, is also accepted as other
    simulators do, although IEEE 1800-2023 7.6 requires equivalent element
-   types.
+   types. A hierarchical name whose first name is a variable of an
+   enclosing instance, such as ``state.field`` in an interface bound into
+   the module declaring ``state``, is also accepted as other simulators do,
+   as if the module's name were prefixed, although IEEE 1800-2023 23.8
+   searches upward for scope names only.
 
    Ignoring this warning will only suppress the lint check; it will
    simulate correctly.
