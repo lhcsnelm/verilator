@@ -84,6 +84,8 @@ module t;
 
   // Doubles each element, through svGetArrayPtr
   import "DPI-C" function void dpii_double(inout real io[]);
+  // Sets each element to its index plus one, as an output of the size of the actual
+  import "DPI-C" function int dpii_iota(output int o[]);
 
   initial begin
     bit [63:0] crc;
@@ -327,6 +329,17 @@ module t;
       dpii_double(q);
       `checkd(q.size(), 3);
       foreach (q[i]) `checkr(q[i], expq[i] * 2);
+    end
+
+    begin
+      int d[];
+      int q[$];
+      d = new[4];
+      q = '{9, 9, 9};
+      `checkd(dpii_iota(d), 4);
+      `checkd(dpii_iota(q), 3);
+      foreach (d[i]) `checkd(d[i], i + 1);
+      foreach (q[i]) `checkd(q[i], i + 1);
     end
 
     `checkd(dpii_failure(), 0);

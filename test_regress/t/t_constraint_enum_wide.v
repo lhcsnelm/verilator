@@ -29,8 +29,10 @@ endclass
 module t;
   initial begin
     automatic Cls c = new;
+    int ok;
     repeat (20) begin
-      `checkd(c.randomize(), 1);
+      ok = c.randomize();
+      `checkd(ok, 1);
       `checkd(c.m, Cls::M0);
       `checkd(c.w inside {Cls::W1, Cls::W2}, 1);
     end

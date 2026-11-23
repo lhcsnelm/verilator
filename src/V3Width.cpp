@@ -391,6 +391,7 @@ class WidthVisitor final : public VNVisitor {
     AstProperty* m_propertyp = nullptr;  // Current property
     AstNodeModule* m_modep = nullptr;  // Current module
     const AstConstraint* m_constraintp = nullptr;  // Current constraint
+    bool m_constraintExpr = false;  // Under a constraint expression, which weights a dist
     AstNodeProcedure* m_procedurep = nullptr;  // Current final/always
     const AstNode* m_writerp = nullptr;  // Assign, release or driving pin whose lvalue is iterated
     const AstWith* m_withp = nullptr;  // Current 'with' statement
@@ -4078,6 +4079,8 @@ class WidthVisitor final : public VNVisitor {
         userIterateAndNext(nodep->rhssp(), WidthVP{SELF, BOTH}.p());
     }
     void visit(AstConstraintExpr* nodep) override {
+        VL_RESTORER(m_constraintExpr);
+        m_constraintExpr = true;
         userIterateAndNext(nodep->exprp(), WidthVP{SELF, BOTH}.p());
     }
     void visit(AstConstraintForeach* nodep) override {
@@ -4569,7 +4572,7 @@ class WidthVisitor final : public VNVisitor {
         // Inside a constraint, V3Randomize handles dist lowering with proper weights,
         // but only for simple scalar/range items. Container-type items (queues, arrays)
         // must be lowered here via insideItem() which knows how to expand them.
-        if (m_constraintp) {
+        if (m_constraintExpr) {
             bool canLower = true;
             for (AstDistItem* const ditemp : nodep->itemspList()) {
                 if (VN_IS(ditemp->rangep(), InsideRange)) continue;
@@ -8763,6 +8766,26 @@ class WidthVisitor final : public VNVisitor {
                 nodep->v3error("class 'new()' cannot be virual (IEEE 1800-2023 18.3)");
             if (nodep->isStatic())
                 nodep->v3error("class 'new()' cannot be static (IEEE 1800-2023 18.3)");
+        }
+        // Function hasn't been widthed, so make it so.
+        // Would use user1 etc, but V3Width called from too many places to spend a user
+        nodep->doingWidth(true);
+        VL_RESTORER(m_funcp);
+        VL_RESTORER(m_ftaskp);
+        m_ftaskp = nodep;
+        // First width the function variable, as if is a recursive function we need data type
+        if (nodep->fvarp()) userIterate(nodep->fvarp(), nullptr);
+        if (nodep->isConstructor()) {
+            // Pretend it's void so less special casing needed when look at dtypes
+            nodep->dtypeSetVoid();
+        } else if (nodep->fvarp()) {
+            m_funcp = VN_AS(nodep, Func);
+            UASSERT_OBJ(m_funcp, nodep, "FTask with function variable, but isn't a function");
+            nodep->dtypeFrom(nodep->fvarp());  // Which will get it from fvarp()->dtypep()
+        }
+        userIterateChildren(nodep, nullptr);
+        // Checked once widthed, so an initializer folded to a constant is not a statement
+        if (nodep->classMethod() && nodep->name() == "new") {
             AstNode* firstp = nullptr;
             for (AstNode* const itemp : nodep->stmtspList()) {
                 if (AstStmtExpr* const sep = VN_CAST(itemp, StmtExpr)) {
@@ -8785,23 +8808,6 @@ class WidthVisitor final : public VNVisitor {
                 firstp = itemp;
             }
         }
-        // Function hasn't been widthed, so make it so.
-        // Would use user1 etc, but V3Width called from too many places to spend a user
-        nodep->doingWidth(true);
-        VL_RESTORER(m_funcp);
-        VL_RESTORER(m_ftaskp);
-        m_ftaskp = nodep;
-        // First width the function variable, as if is a recursive function we need data type
-        if (nodep->fvarp()) userIterate(nodep->fvarp(), nullptr);
-        if (nodep->isConstructor()) {
-            // Pretend it's void so less special casing needed when look at dtypes
-            nodep->dtypeSetVoid();
-        } else if (nodep->fvarp()) {
-            m_funcp = VN_AS(nodep, Func);
-            UASSERT_OBJ(m_funcp, nodep, "FTask with function variable, but isn't a function");
-            nodep->dtypeFrom(nodep->fvarp());  // Which will get it from fvarp()->dtypep()
-        }
-        userIterateChildren(nodep, nullptr);
 
         nodep->didWidth(true);
         nodep->doingWidth(false);
@@ -12044,12 +12050,6 @@ class WidthVisitor final : public VNVisitor {
             return;
         }
         const bool dynamic = VN_IS(pinDTypep, DynArrayDType) || VN_IS(pinDTypep, QueueDType);
-        if (dynamic && portp->direction().isOutput()) {
-            pinp->v3error("DPI output open array argument "
-                          << portp->prettyNameQ()
-                          << " may not be passed a dynamic array or queue (IEEE 1800-2023 7.7)");
-            return;
-        }
         // DPI passes the elements as one C layout block, so only the first dimension may be of a
         // dynamic array or queue
         int pinDims = dynamic ? 1 : 0;  // Unpacked dimensions of the actual outside its elements
@@ -12117,6 +12117,30 @@ class WidthVisitor final : public VNVisitor {
             if (!pinp) continue;  // Argument error we'll find later
             if (hasOpenArrayDTypeRecurse(portp->dtypep())) {
                 checkOpenArrayActual(portp, pinp);
+                // The C function cannot resize a dynamic array or queue, so writes the elements
+                // it has, which an output then passes as an inout does, as other simulators do
+                const AstNodeDType* const pinDTypep = pinp->dtypep()->skipRefp();
+                if (portp->direction() == VDirection::OUTPUT
+                    && (VN_IS(pinDTypep, DynArrayDType) || VN_IS(pinDTypep, QueueDType))) {
+                    portp->direction(VDirection::INOUT);
+                    // Nor resets it, as an output is on entry
+                    std::vector<AstAssign*> resetps;
+                    newTaskp->foreach([&](AstAssign* assignp) {
+                        const AstVarRef* const lhsp = VN_CAST(assignp->lhsp(), VarRef);
+                        if (lhsp && lhsp->varp() == portp && VN_IS(assignp->rhsp(), CReset)) {
+                            resetps.push_back(assignp);
+                        }
+                    });
+                    for (AstAssign* const assignp : resetps) {
+                        AstNode* deletep = assignp;  // With its statement if alone in it
+                        AstInitialAutomaticStmt* const initp
+                            = VN_CAST(assignp->backp(), InitialAutomaticStmt);
+                        if (initp && initp->stmtsp() == assignp && !assignp->nextp()) {
+                            deletep = initp;
+                        }
+                        VL_DO_DANGLING(pushDeletep(deletep->unlinkFrBack()), deletep);
+                    }
+                }
                 AstNodeDType* const oldDTypep = portp->dtypep();
                 portp->dtypep(pinp->dtypep());
                 newTaskp->foreach([oldDTypep, portp](AstNode* nodep) {

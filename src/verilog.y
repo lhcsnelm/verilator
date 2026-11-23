@@ -936,6 +936,8 @@ BISONPRE_VERSION(3.7,%define api.header.include {"V3ParseBison.h"})
 
 // Verilog op precedence
 %right          yP_MINUSGT yP_LTMINUSGT
+// IEEE: expression_or_dist, so dist applies to the whole expression before it
+%left           yDIST
 %right          '?' ':' yP_COLON__BEGIN yP_COLON__FORK
 %left           yP_OROR
 %left           yP_ANDAND
@@ -943,7 +945,7 @@ BISONPRE_VERSION(3.7,%define api.header.include {"V3ParseBison.h"})
 %left           '^' yP_XNOR
 %left           '&' yP_NAND
 %left           yP_EQUAL yP_NOTEQUAL yP_CASEEQUAL yP_CASENOTEQUAL yP_WILDEQUAL yP_WILDNOTEQUAL
-%left           '>' '<' yP_GTE yP_LTE yP_LTE__IGNORE yINSIDE yDIST
+%left           '>' '<' yP_GTE yP_LTE yP_LTE__IGNORE yINSIDE
 %left           yP_SLEFT yP_SRIGHT yP_SSRIGHT
 %left           '+' '-'
 %left           '*' '/' '%'

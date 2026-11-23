@@ -25,14 +25,18 @@ module t;
 
   initial begin
     automatic int seen[narrow_e];
+    int ok;
     repeat (100) begin
-      `checkd(std::randomize(n), 1);
+      ok = std::randomize(n);
+      `checkd(ok, 1);
       `checkd(n inside {N0, N1, N2}, 1);
       ++seen[n];
-      `checkd(std::randomize(w), 1);
+      ok = std::randomize(w);
+      `checkd(ok, 1);
       `checkd(w inside {W0, W1, W2}, 1);
       // Also with constraints, of the variable or not
-      `checkd(std::randomize(n, m) with {n != N0;}, 1);
+      ok = std::randomize(n, m) with {n != N0;};
+      `checkd(ok, 1);
       `checkd(n inside {N1, N2}, 1);
       `checkd(m inside {N0, N1, N2}, 1);
     end

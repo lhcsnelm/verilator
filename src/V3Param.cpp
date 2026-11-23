@@ -3229,6 +3229,92 @@ class ParamVisitor final : public VNVisitor {
         // LCOV_EXCL_STOP
     }
 
+    // The value of parameter 'name' of the module at 'depth' along the instance path 'cellps'
+    // below m_modp, as an expression of constants, or nullptr if not known.  The value is the
+    // override of the instantiating cell, else the module's own, of the parameters around it.
+    AstNodeExpr* newParamValuep(const std::vector<AstCell*>& cellps, size_t depth,
+                                const string& name) {
+        AstNodeModule* const modp = depth ? cellps[depth - 1]->modp() : m_modp;
+        for (AstNode* stmtp = modp->stmtsp(); stmtp; stmtp = stmtp->nextp()) {
+            const AstVar* const varp = VN_CAST(stmtp, Var);
+            if (!varp || !varp->isParam() || varp->name() != name) continue;
+            if (depth) {
+                for (AstNode* nodep = cellps[depth - 1]->paramsp(); nodep;
+                     nodep = nodep->nextp()) {
+                    const AstPin* const pinp = VN_CAST(nodep, Pin);
+                    if (pinp && pinp->modVarp() && pinp->modVarp()->name() == name) {
+                        AstNodeExpr* const exprp = VN_CAST(pinp->exprp(), NodeExpr);
+                        return exprp ? newParamExprp(cellps, depth - 1, exprp) : nullptr;
+                    }
+                }
+            }
+            AstNodeExpr* const valuep = VN_CAST(varp->valuep(), NodeExpr);
+            return valuep ? newParamExprp(cellps, depth, valuep) : nullptr;
+        }
+        return nullptr;
+    }
+    // A clone of an expression of the module at 'depth', its parameters replaced by their
+    // values (see newParamValuep), or nullptr if one is not known
+    AstNodeExpr* newParamExprp(const std::vector<AstCell*>& cellps, size_t depth,
+                               AstNodeExpr* exprp) {
+        if (exprp->exists([](const AstNode* nodep) {
+                return VN_IS(nodep, VarXRef) || VN_IS(nodep, NodeFTaskRef)
+                       || (VN_IS(nodep, VarRef) && !VN_AS(nodep, VarRef)->varp()->isParam());
+            })) {
+            return nullptr;
+        }
+        AstNodeExpr* const clonep = exprp->cloneTree(false);
+        std::vector<AstVarRef*> refps;
+        clonep->foreach([&](AstVarRef* refp) { refps.push_back(refp); });
+        for (AstVarRef* const refp : refps) {
+            AstNodeExpr* const valuep = newParamValuep(cellps, depth, refp->varp()->name());
+            if (!valuep) {
+                VL_DO_DANGLING(clonep->deleteTree(), clonep);
+                return nullptr;
+            }
+            if (refp == clonep) {
+                VL_DO_DANGLING(clonep->deleteTree(), clonep);
+                return valuep;
+            }
+            refp->replaceWith(valuep);
+            VL_DO_DANGLING(refp->deleteTree(), refp);
+        }
+        return clonep;
+    }
+    // Replace hierarchical references to parameters of instances below the current module in
+    // a cell's parameter values by their values, as other simulators allow
+    void foldHierParams(AstNode* paramsp) {
+        std::vector<AstVarXRef*> xrefps;
+        for (AstNode* nodep = paramsp; nodep; nodep = nodep->nextp()) {
+            nodep->foreach([&](AstVarXRef* refp) {
+                if (refp->varp() && refp->varp()->isParam()) xrefps.push_back(refp);
+            });
+        }
+        for (AstVarXRef* const refp : xrefps) {
+            std::vector<AstCell*> cellps;
+            AstNodeModule* modp = m_modp;
+            string rest = refp->dotted();
+            while (modp && !rest.empty()) {
+                const size_t dot = rest.find('.');
+                const string cellName = rest.substr(0, dot);
+                rest = dot == string::npos ? "" : rest.substr(dot + 1);
+                AstCell* cellp = nullptr;
+                for (AstNode* stmtp = modp->stmtsp(); stmtp; stmtp = stmtp->nextp()) {
+                    AstCell* const scellp = VN_CAST(stmtp, Cell);
+                    if (scellp && scellp->name() == cellName) cellp = scellp;
+                }
+                modp = cellp ? cellp->modp() : nullptr;
+                if (cellp) cellps.push_back(cellp);
+            }
+            if (!modp || cellps.empty()) continue;
+            if (AstNodeExpr* const valuep
+                = newParamValuep(cellps, cellps.size(), refp->varp()->name())) {
+                refp->replaceWith(valuep);
+                VL_DO_DANGLING(pushDeletep(refp), refp);
+            }
+        }
+    }
+
     // Flag hierarchical refs in a parameter value. Single top-down pass.
     void checkParamNotHierRecurse(AstNode* nodesp, bool underTypeQuery = false) {
         for (AstNode* const nodep : VNList<AstNode>{nodesp}) {
@@ -3526,6 +3612,7 @@ class ParamVisitor final : public VNVisitor {
             // The elements replaced the arrayed cell in place, so will be iterated next.
             return;
         }
+        foldHierParams(nodep->paramsp());
         checkParamNotHierRecurse(nodep->paramsp());
         if (VN_IS(nodep->modp(), Iface)) m_ifaceInstCells.emplace(nodep->name(), nodep);
         visitCellOrClassRef(nodep, VN_IS(nodep->modp(), Iface));

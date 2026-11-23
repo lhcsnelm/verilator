@@ -41,8 +41,10 @@ endclass
 module t;
   initial begin
     automatic Outer o = new;
+    int ok;
     repeat (20) begin
-      `checkd(o.randomize(), 1);
+      ok = o.randomize();
+      `checkd(ok, 1);
       if (!o.mid.inner.zero) `checkd(o.mid.inner.delay inside {[1 : 3]}, 1);
       `checkd(o.mid.inner.delay inside {[1 : 100]}, 1);
     end

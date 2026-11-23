@@ -27,8 +27,10 @@ module t;
   p::b_e y;
   initial begin
     automatic Cls c = new;
+    int ok;
     repeat (20) begin
-      `checkd(c.randomize(), 1);
+      ok = c.randomize();
+      `checkd(ok, 1);
       `checkd(c.x inside {p::B0, p::B1}, 1);
     end
     y = p::B1;

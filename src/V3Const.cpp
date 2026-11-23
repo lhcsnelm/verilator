@@ -2690,7 +2690,9 @@ class ConstVisitor final : public VNVisitor {
             replaceAssignToFixedAggregate(nodep, nodep->lhsp()->unlinkFrBack(), srcp);
             return true;
         } else if (m_doV && VN_IS(nodep->rhsp(), StreamR)
-                   && !VN_IS(nodep->lhsp()->dtypep()->skipRefp(), QueueDType)) {
+                   && (!VN_IS(nodep->lhsp()->dtypep()->skipRefp(), QueueDType)
+                       || VN_IS(VN_AS(nodep->rhsp(), StreamR)->lhsp()->dtypep()->skipRefp(),
+                                UnpackArrayDType))) {
             // The right-streaming operator on rhs of assignment does not
             // change the order of bits. Eliminate stream but keep its lhsp.
             // Add a cast if needed.
@@ -2716,6 +2718,17 @@ class ConstVisitor final : public VNVisitor {
                 } else {
                     srcp = new AstCvtArrayToPacked{srcp->fileline(), srcp, nodep->dtypep()};
                 }
+            } else if (VN_IS(srcDTypep, UnpackArrayDType)
+                       && (VN_IS(dstDTypep, QueueDType) || VN_IS(dstDTypep, DynArrayDType))) {
+                // Element by element, in order of the declared range
+                srcp = new AstCvtArrayToArray{
+                    srcp->fileline(),
+                    srcp,
+                    nodep->dtypep(),
+                    !VN_AS(srcDTypep, UnpackArrayDType)->declRange().ascending(),
+                    1,
+                    dstDTypep->subDTypep()->width(),
+                    srcDTypep->subDTypep()->width()};
             } else if (VN_IS(srcDTypep, UnpackArrayDType)) {
                 // Pack to the width of the whole array; the lhs width is matched below.
                 const int elementsNum = srcDTypep->arrayUnpackedElements();

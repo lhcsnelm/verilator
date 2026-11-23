@@ -152,6 +152,9 @@ class ConstraintExprVisitor final : public VNVisitor {
 
     AstClass* const m_classp;  // Class being processed
     AstBegin* const m_inlineInitBlockp;  // Block to add write_var calls to
+    // Setup task of the class constraint lowered, if not inline, which classes derived from its
+    // class also call, unlike that class's __Vsetup_constraints
+    AstNodeFTask* m_constraintTaskp = nullptr;
                                          // (may be null, then new() is used)
     AstNodeFTask* const m_memberrefInitTaskp;  // Fallback for memberref write_var when
                                                // classp has no randomize() (inherited members)
@@ -1275,8 +1278,10 @@ class ConstraintExprVisitor final : public VNVisitor {
                 = createEnumConstraint(nodep->fileline(), varp->name(), enumDtp, genVarp);
             AstBegin* targetp = m_inlineInitBlockp;
             if (!targetp) {
-                targetp
-                    = newInitBlockp(SmtUtil::getCreateConstraintSetupFunc(m_classp, m_memberMap));
+                targetp = newInitBlockp(
+                    m_constraintTaskp
+                        ? m_constraintTaskp
+                        : SmtUtil::getCreateConstraintSetupFunc(m_classp, m_memberMap));
             }
             targetp->addStmtsp(enumRangeExprp->makeStmt());
             m_rangeConstrainedEnums.push_back(varp);
@@ -3051,6 +3056,12 @@ public:
         , m_prepareConstrainedArraysp{prepareConstrainedArraysp}
         , m_uniqueConstraintIdp{uniqueConstraintIdp}
         , m_uniqueNames{uniqueNames} {
+        if (!inlineInitp) {
+            for (AstNode* abovep = nodep; abovep && !m_constraintTaskp;
+                 abovep = abovep->aboveLoopp()) {
+                m_constraintTaskp = VN_CAST(abovep, NodeFTask);
+            }
+        }
         // Pre-pass before SMT lowering: extract conditional disable-soft
         // directives as runtime AstIf statements and append them to the
         // constraint-items chain so they reach the setup task body.  The SMT
@@ -3344,9 +3355,13 @@ class SolverSmtLowering final : public V3SolverLowering {
         return new AstConstraintIf{fl, condp, thenBodyp, nullptr};
     }
 
+    // A variable the solver draws: rand, or a std::randomize() argument
+    static bool isDrawnVar(const AstVar* varp) {
+        return varp->rand().isRandomizable() || varp->isStdRandomizeArg();
+    }
+
     static bool distBoundRefsRandVar(const AstNode* boundp) {
-        return boundp->exists(
-            [](const AstVarRef* vrefp) { return vrefp->varp()->rand().isRandomizable(); });
+        return boundp->exists([](const AstVarRef* vrefp) { return isDrawnVar(vrefp->varp()); });
     }
 
     static bool distBoundRefsModeVar(const AstNode* boundp) {
@@ -3507,7 +3522,7 @@ class SolverSmtLowering final : public V3SolverLowering {
     // A non-rand value can never be re-drawn; a non-rand owner level is skipped.
     AstNodeExpr* newVarGate(AstVar* varp, const AstMemberRef* memberRefp, bool ownerLevel,
                             AstVar* randModeVarp, FileLine* fl) {
-        if (!varp->rand().isRandomizable()) {
+        if (!isDrawnVar(varp)) {
             return new AstConst{fl, AstConst::BitTrue{}, ownerLevel};
         }
         const RandomizeMode rmode = {.asUQuad = varp->user1()};
@@ -3721,8 +3736,14 @@ class SolverSmtLowering final : public V3SolverLowering {
 
     // Replace AstDist with weighted bucket selection via AstConstraintIf chain.
     // Supports both constant and variable weight expressions.
-    void lowerDistConstraints(AstTask* taskp, AstNodeConstraintItem* constrItemsp,
-                              AstVar* randModeVarp, AstConstraintForeach* foreachp = nullptr) {
+    // Conditions of the if/else constraints a dist is under, each true if of the else branch,
+    // outside foreach constraints
+    using DistGuards = std::vector<std::pair<AstNodeExpr*, bool>>;
+
+    void lowerDistConstraints(AstNodeFTask* taskp, AstNodeConstraintItem* constrItemsp,
+                              AstVar* randModeVarp, AstConstraintForeach* foreachp = nullptr,
+                              DistGuards* guardsp = nullptr,
+                              AstNodeConstraintItem* topItemp = nullptr) {
         // When inside a foreach, bucket preamble stmts are stored in foreachp->user3p()
         // (as a linked list) so visit(AstConstraintForeach*) can inject them into the
         // real AstForeach body. Outside a foreach, they go directly into taskp. The
@@ -3745,9 +3766,16 @@ class SolverSmtLowering final : public V3SolverLowering {
         for (AstNodeConstraintItem* const itemp : VNList<AstNodeConstraintItem>{constrItemsp}) {
             // dist can appear inside an if/else or foreach constraint.
             if (AstConstraintIf* const cifp = VN_CAST(itemp, ConstraintIf)) {
-                lowerDistConstraints(taskp, cifp->thensp(), randModeVarp, foreachp);
+                DistGuards guards = guardsp ? *guardsp : DistGuards{};
+                DistGuards* const innerGuardsp = foreachp ? nullptr : &guards;
+                AstNodeConstraintItem* const innerTopp = topItemp ? topItemp : itemp;
+                guards.emplace_back(cifp->condp(), false);
+                lowerDistConstraints(taskp, cifp->thensp(), randModeVarp, foreachp, innerGuardsp,
+                                     innerTopp);
                 if (cifp->elsesp()) {
-                    lowerDistConstraints(taskp, cifp->elsesp(), randModeVarp, foreachp);
+                    guards.back().second = true;
+                    lowerDistConstraints(taskp, cifp->elsesp(), randModeVarp, foreachp,
+                                         innerGuardsp, innerTopp);
                 }
                 continue;
             }
@@ -3772,7 +3800,12 @@ class SolverSmtLowering final : public V3SolverLowering {
                     AstConstraintIf* const liftedp = liftLogIfChainToConstraintIf(topLogIfp);
                     constrExprp->replaceWith(liftedp);
                     VL_DO_DANGLING(pushDeletep(constrExprp), constrExprp);
-                    lowerDistConstraints(taskp, liftedp->thensp(), randModeVarp, foreachp);
+                    // As if written as this if
+                    DistGuards guards = guardsp ? *guardsp : DistGuards{};
+                    guards.emplace_back(liftedp->condp(), false);
+                    lowerDistConstraints(taskp, liftedp->thensp(), randModeVarp, foreachp,
+                                         foreachp ? nullptr : &guards,
+                                         topItemp ? topItemp : liftedp);
                     continue;
                 }
             }
@@ -3856,10 +3889,41 @@ class SolverSmtLowering final : public V3SolverLowering {
                 buildWeightedBucketChain(distp, buckets, bucketVarp, cumSums), distp, buckets,
                 randModeVarp);
 
-            constrExprp->replaceWith(chainp);
-            VL_DO_DANGLING(pushDeletep(constrExprp), constrExprp);
-            // Hard membership precedes the soft bucket chain in the constraint list.
-            chainp->addHereThisAsNext(membershipp);
+            if (guardsp && !guardsp->empty()) {
+                // Folding an if/else constraint makes its items one hard constraint, so the
+                // soft chain is after the outermost, under its conditions, and the rest in it
+                AstConstraintExpr* const softp = VN_AS(chainp, ConstraintExpr);
+                if (AstNode* const restp = softp->nextp()) {
+                    AstNodeConstraintItem* const itemsp = membershipp;
+                    itemsp->addNext(VN_AS(restp->unlinkFrBackWithNext(), NodeConstraintItem));
+                }
+                constrExprp->replaceWith(membershipp);
+                VL_DO_DANGLING(pushDeletep(constrExprp), constrExprp);
+                AstNodeExpr* guardp = nullptr;
+                for (const auto& guard : *guardsp) {
+                    AstNodeExpr* condp = guard.first->cloneTreePure(false);
+                    if (guard.second) {
+                        condp = new AstLogNot{fl, condp};
+                        condp->user1(true);
+                    }
+                    if (guardp) {
+                        guardp = new AstLogAnd{fl, guardp, condp};
+                        guardp->user1(true);
+                    } else {
+                        guardp = condp;
+                    }
+                }
+                AstLogIf* const ifp = new AstLogIf{fl, guardp, softp->exprp()->unlinkFrBack()};
+                ifp->dtypeSetBit();
+                ifp->user1(true);
+                softp->exprp(ifp);
+                topItemp->addNextHere(softp);
+            } else {
+                constrExprp->replaceWith(chainp);
+                VL_DO_DANGLING(pushDeletep(constrExprp), constrExprp);
+                // Hard membership precedes the soft bucket chain in the constraint list.
+                chainp->addHereThisAsNext(membershipp);
+            }
 
             // Clean up nodes used only as clone templates (never inserted into tree)
             for (auto& bucket : buckets) {
@@ -4312,6 +4376,8 @@ public:
 
         // Generate constraint setup code and a hardcoded call to the solver
         AstBegin* const holderp = SmtUtil::newItemsHolderp(nodep->fileline(), capturedTreep);
+        lowerDistConstraints(randomizeFuncp, VN_AS(holderp->declsp(), NodeConstraintItem),
+                             randModeVarp);
         AstBegin* const setupBlockp
             = new AstBegin{nodep->fileline(), "__Vsetup_constraints", holderp, true};
         randomizeFuncp->addStmtsp(setupBlockp);
@@ -4600,6 +4666,8 @@ public:
         randomizeFuncp->addStmtsp(
             implementConstraintsClearAll(randomizeFuncp->fileline(), stdrandp));
         AstBegin* const holderp = SmtUtil::newItemsHolderp(fl, capturedTreep);
+        lowerDistConstraints(randomizeFuncp, VN_AS(holderp->declsp(), NodeConstraintItem),
+                             nullptr);
         AstBegin* const setupBlockp = new AstBegin{fl, "__Vsetup_constraints", holderp, true};
         randomizeFuncp->addStmtsp(setupBlockp);
         {

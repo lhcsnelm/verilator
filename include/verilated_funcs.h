@@ -3157,20 +3157,20 @@ inline VlUnpacked<T_Value, N_Depth> VL_PACK_REVERSED(const VlUnpacked<T_Value, N
     return ret;
 }
 
-// Overloads for VlUnpacked source -> VlQueue destination
-template <typename T, std::size_t N_Depth>
-inline void VL_COPY_Q(VlQueue<T>& q, const VlUnpacked<T, N_Depth>& from, int lbits,
+// Overloads for VlUnpacked source -> VlQueue destination, also of different element types
+template <typename T_Dst, typename T_Src, std::size_t N_Depth>
+inline void VL_COPY_Q(VlQueue<T_Dst>& q, const VlUnpacked<T_Src, N_Depth>& from, int lbits,
                       int srcElementBits, int dstElementBits) {
-    VlQueue<T> srcQ;
+    VlQueue<T_Src> srcQ;
     srcQ.renew(N_Depth);
     for (size_t i = 0; i < N_Depth; ++i) srcQ.atWrite(i) = from[i];
     VL_COPY_Q(q, srcQ, lbits, srcElementBits, dstElementBits);
 }
 
-template <typename T, std::size_t N_Depth>
-inline void VL_REVCOPY_Q(VlQueue<T>& q, const VlUnpacked<T, N_Depth>& from, int lbits,
+template <typename T_Dst, typename T_Src, std::size_t N_Depth>
+inline void VL_REVCOPY_Q(VlQueue<T_Dst>& q, const VlUnpacked<T_Src, N_Depth>& from, int lbits,
                          int srcElementBits, int dstElementBits) {
-    VlQueue<T> srcQ;
+    VlQueue<T_Src> srcQ;
     srcQ.renew(N_Depth);
     for (size_t i = 0; i < N_Depth; ++i) srcQ.atWrite(i) = from[N_Depth - 1 - i];
     VL_COPY_Q(q, srcQ, lbits, srcElementBits, dstElementBits);

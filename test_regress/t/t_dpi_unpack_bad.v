@@ -44,16 +44,6 @@ module t;
     import_func0(sig3);
   end
 
-  import "DPI-C" function void import_func4(output byte out[]);
-  byte dyn[];
-  byte que[$];
-
-  initial begin
-    // dynamic array or queue for an output open array
-    import_func4(dyn);
-    import_func4(que);
-  end
-
   import "DPI-C" function void import_func5(input real in[]);
   import "DPI-C" function void import_func6(input int in[]);
   import "DPI-C" function void import_func7(input real in[][2]);

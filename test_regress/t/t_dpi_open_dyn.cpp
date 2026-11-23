@@ -155,3 +155,10 @@ void dpii_double(const svOpenArrayHandle io) {
     double* const datap = static_cast<double*>(svGetArrayPtr(io));
     for (int k = 0; k < svSize(io, 1); ++k) datap[k] *= 2;
 }
+
+int dpii_iota(const svOpenArrayHandle o) {
+    for (int i = svLow(o, 1); i <= svHigh(o, 1); ++i) {
+        *static_cast<int*>(svGetArrElemPtr1(o, i)) = i + 1;
+    }
+    return svSize(o, 1);
+}

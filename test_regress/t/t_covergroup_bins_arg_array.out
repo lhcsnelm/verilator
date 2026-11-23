@@ -1,0 +1,29 @@
+t.cg.cp_flag.auto_0: 3
+t.cg.cp_flag.auto_1: 3
+t.cg.cp_target.fixed[0]: 0
+t.cg.cp_target.fixed[1]: 1
+t.cg.cp_target.high[0]: 1
+t.cg.cp_target.high[1]: 0
+t.cg.cp_target.low[0]: 1
+t.cg.cp_target.low[1]: 0
+t.cg.cp_target.low[2]: 1
+t.cg.cp_target.low[3]: 0
+t.cg.cp_target.low[4]: 1
+t.cg.cx.<fixed[0],auto_0> [cross]: 0
+t.cg.cx.<fixed[0],auto_1> [cross]: 0
+t.cg.cx.<fixed[1],auto_0> [cross]: 0
+t.cg.cx.<fixed[1],auto_1> [cross]: 1
+t.cg.cx.<high[0],auto_0> [cross]: 1
+t.cg.cx.<high[0],auto_1> [cross]: 0
+t.cg.cx.<high[1],auto_0> [cross]: 0
+t.cg.cx.<high[1],auto_1> [cross]: 0
+t.cg.cx.<low[0],auto_0> [cross]: 1
+t.cg.cx.<low[0],auto_1> [cross]: 0
+t.cg.cx.<low[1],auto_0> [cross]: 0
+t.cg.cx.<low[1],auto_1> [cross]: 0
+t.cg.cx.<low[2],auto_0> [cross]: 0
+t.cg.cx.<low[2],auto_1> [cross]: 1
+t.cg.cx.<low[3],auto_0> [cross]: 0
+t.cg.cx.<low[3],auto_1> [cross]: 0
+t.cg.cx.<low[4],auto_0> [cross]: 0
+t.cg.cx.<low[4],auto_1> [cross]: 1

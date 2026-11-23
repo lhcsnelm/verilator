@@ -1,0 +1,5 @@
+t.cg.cp_all.auto[ERR]: 0
+t.cg.cp_all.auto[OK]: 1
+t.cg.cp_sts.auto[ERR]: 0
+t.cg.cp_sts.auto[OK]: 1
+t.cg.cp_sts.undriven [ignore]: 0

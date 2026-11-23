@@ -779,8 +779,8 @@ class FunctionalCoverageVisitor final : public VNVisitor {
                 dropBins(coverpointp, binp);
                 continue;
             }
-            if (integral && !binp->isArray() && !binp->transp() && !binp->isWildcard()
-                && !binWith(binp) && foldBinValues(binp)) {
+            if (integral && !binp->transp() && !binp->isWildcard() && !binWith(binp)
+                && foldBinValues(binp)) {
                 m_runtimeValueBins.insert(binp);
             }
             if (!isConstructedBins(binp)) continue;
@@ -950,7 +950,9 @@ class FunctionalCoverageVisitor final : public VNVisitor {
                             const AstEnumDType* enump) {
         FileLine* const fl = coverpointp->fileline();
         for (const AstEnumItem* const itemp : enump->itemspList()) {
-            AstConst* const lop = newValueConst(fl, VN_AS(itemp->valuep(), Const)->num(), exprp);
+            const V3Number& num = VN_AS(itemp->valuep(), Const)->num();
+            if (num.isFourState()) continue;  // Not a coverpoint value (IEEE 1800-2023 19.5.7)
+            AstConst* const lop = newValueConst(fl, num, exprp);
             AstInsideRange* const rangep = new AstInsideRange{fl, lop, lop->cloneTree(false)};
             rangep->dtypeFrom(exprp);
             coverpointp->addBinsp(
@@ -2000,11 +2002,13 @@ class FunctionalCoverageVisitor final : public VNVisitor {
         FileLine* const fl = binp->fileline();
         const string prefix
             = m_sizedNames.get(sanitizeGeneratedName(coverpointp->name() + "__" + binp->name()));
-        // The count, and whether it is positive; one of a filter's scalar bin, or bin per value
+        AstCoverWith* const withp = binWith(binp);
+        // The count, and whether it is positive; one of a scalar bin, or of an array without a
+        // size more than its values, so a bin per value
         const std::pair<AstNodeExpr*, AstNodeExpr*> count
             = binp->arraySizep() ? newCountArgs(fl, prefix + "_count", binp->arraySizep())
-                                 : newCountArgs(fl, 1);
-        AstCoverWith* const withp = binWith(binp);
+              : binp->isArray() && !withp ? newCountArgs(fl, std::numeric_limits<uint64_t>::max())
+                                          : newCountArgs(fl, 1);
         if (withp && !binRangesp(binp)) {  // The coverpoint's name: all of its values
             for (const std::pair<V3Number, V3Number>& run : coverpointValues(binp, exprp)) {
                 m_constructorp->addStmtsp(itemCall(fl, cpVarp,
