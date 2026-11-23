@@ -250,6 +250,7 @@ public:
 };
 
 class VlSolverSession;
+enum class VlSolverStatus : uint8_t;
 
 //=============================================================================
 // Object holding constraints and variable references.
@@ -361,8 +362,13 @@ class VlRandomizer VL_NOT_FINAL {
     };
     Unigen2State m_ug2;
 
-    void solveDiversity(VlRNG& rngr, VlSolverSession& sess);
-    void solveDiversityPins(VlRNG& rngr, VlSolverSession& sess);
+    // Diversify the solution of the variables not in 'solvedp', the values of earlier phases
+    void solveDiversity(VlRNG& rngr, VlSolverSession& sess,
+                        const std::map<std::string, std::string>* solvedp = nullptr);
+    // Pin the bits of 'vars' to random targets, dropping those that conflict; SAT if then
+    // satisfiable, with the model to read
+    VlSolverStatus solveDiversityPins(VlRNG& rngr, VlSolverSession& sess,
+                                      const std::vector<const VlRandomVar*>& vars);
     void solveDiversityXor(VlRNG& rngr, VlSolverSession& sess);
     // Layers of solve...before variables in dependency order
     bool buildSolveLayers(std::vector<std::vector<std::string>>& layersr);

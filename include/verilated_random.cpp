@@ -1454,34 +1454,38 @@ bool VlRandomizer::generateSamples(VlSolverSession& sess, VlRNG& rngr) VL_REQUIR
     return false;
 }
 
-void VlRandomizer::solveDiversity(VlRNG& rngr, VlSolverSession& sess) VL_REQUIRES(sess.m_mutex) {
+void VlRandomizer::solveDiversity(VlRNG& rngr, VlSolverSession& sess,
+                                  const std::map<std::string, std::string>* solvedp)
+    VL_REQUIRES(sess.m_mutex) {
+    // The variables still free: not of an earlier phase, which pins them
+    std::vector<const VlRandomVar*> vars;
     bool hasArray = false;
     for (const auto& var : m_vars) {
-        if (var.second->dimension() > 0) {
-            hasArray = true;
-            break;
-        }
+        if (solvedp && solvedp->count(var.first)) continue;
+        vars.push_back(var.second.get());
+        if (var.second->dimension() > 0) hasArray = true;
     }
     if (hasArray) {
         solveDiversityXor(rngr, sess);
-    } else {
-        solveDiversityPins(rngr, sess);
+    } else if (solveDiversityPins(rngr, sess, vars) == VlSolverStatus::SAT) {
+        applyModel(sess);
     }
 }
 
-void VlRandomizer::solveDiversityPins(VlRNG& rngr, VlSolverSession& sess)
+VlSolverStatus VlRandomizer::solveDiversityPins(VlRNG& rngr, VlSolverSession& sess,
+                                                const std::vector<const VlRandomVar*>& vars)
     VL_REQUIRES(sess.m_mutex) {
     std::iostream& os = sess.os();
     // Tie each free bit to a random target via an assumption literal;
     // drop one conflicting literal per round until compatible
     int npins = 0;
-    for (const auto& var : m_vars) {
-        const int w = var.second->totalWidth();
+    for (const VlRandomVar* const varp : vars) {
+        const int w = varp->totalWidth();
         for (int b = 0; b < w; ++b) {
             const bool target = (VL_RANDOM_RNG_I(rngr) & 1);
             os << "(declare-fun __Va" << npins << " () Bool)\n";
             os << "(assert (= __Va" << npins << " (=";
-            var.second->emitExtract(os, b);
+            varp->emitExtract(os, b);
             os << " #b" << (target ? '1' : '0') << ")))\n";
             ++npins;
         }
@@ -1494,12 +1498,8 @@ void VlRandomizer::solveDiversityPins(VlRNG& rngr, VlSolverSession& sess)
         }
         os << "))\n";
         const VlSolverStatus status = sess.readStatus();
-        if (status == VlSolverStatus::SAT) {
-            applyModel(sess);
-            return;
-        }
-        // Unknown or failure: the base solution already written stands
-        if (status != VlSolverStatus::UNSAT) return;
+        // On SAT the model is to be read; unknown or failure leaves the base solution
+        if (status != VlSolverStatus::UNSAT) return status;
         // get-unsat-assumptions only echoes still-active literals,
         // so the first in-range index is a live conflicting bit.
         const std::vector<int> core = readUnsatAssumptions(sess);
@@ -1511,8 +1511,9 @@ void VlRandomizer::solveDiversityPins(VlRNG& rngr, VlSolverSession& sess)
                 break;
             }
         }
-        if (!droppedOne) return;
+        if (!droppedOne) return VlSolverStatus::UNSAT;
     }
+    return VlSolverStatus::UNSAT;
 }
 
 void VlRandomizer::solveDiversityXor(VlRNG& rngr, VlSolverSession& sess)
@@ -1914,7 +1915,12 @@ bool VlRandomizer::solvePhases(VlRNG& rngr, VlSolverSession& sess,
         const bool isFinalPhase = (phase == layers.size() - 1);
 
         os << "(set-option :produce-models true)\n";
-        if (solverSamples()) emitSolverSeed(os, rngr);
+        if (!solverSamples()) {
+            // Lets the scalar pin path learn which free-bit assumptions conflict.
+            os << "(set-option :produce-unsat-assumptions true)\n";
+        } else {
+            emitSolverSeed(os, rngr);
+        }
         os << "(set-logic " << logicp << ")\n";
         emitDefines(os);
         emitDeclares(os, false);
@@ -1941,7 +1947,7 @@ bool VlRandomizer::solvePhases(VlRNG& rngr, VlSolverSession& sess,
 
         if (isFinalPhase) {
             if (!applyModel(sess)) return false;
-            if (!solverSamples()) solveDiversityXor(rngr, sess);
+            if (!solverSamples()) solveDiversity(rngr, sess, &solvedValues);
             // Record solved randc values for future exclusion
             recordRandcValues();
         } else {
@@ -1981,14 +1987,26 @@ bool VlRandomizer::solvePhaseValues(VlSolverSession& sess, VlRNG& rngr,
     if (!readPhaseValues(sess, solvedValuesr)) return false;
     if (solverSamples()) return true;
 
-    // Try diversity: add random constraint, re-check. If sat, get
-    // updated (more diverse) values. If unsat, keep baseline values.
-    // Scoped to this layer's own vars -- see randomConstraint's comment.
-    os << "(assert ";
-    randomConstraint(os, rngr, _VL_SOLVER_HASH_LEN, &layerVars);
-    os << ")\n";
-    os << "(check-sat)\n";
-    const VlSolverStatus status = sess.readStatus();
+    // Try diversity, scoped to this layer's own vars -- see randomConstraint's comment: pin
+    // their bits, or for an array add a random constraint.  If sat, get updated (more
+    // diverse) values, else keep baseline values.
+    std::vector<const VlRandomVar*> vars;
+    bool hasArray = false;
+    for (const auto& varName : layerVars) {
+        const VlRandomVar* const varp = m_vars.find(varName)->second.get();
+        vars.push_back(varp);
+        if (varp->dimension() > 0) hasArray = true;
+    }
+    VlSolverStatus status;
+    if (hasArray) {
+        os << "(assert ";
+        randomConstraint(os, rngr, _VL_SOLVER_HASH_LEN, &layerVars);
+        os << ")\n";
+        os << "(check-sat)\n";
+        status = sess.readStatus();
+    } else {
+        status = solveDiversityPins(rngr, sess, vars);
+    }
     if (status == VlSolverStatus::SAT) {
         emitGetValueCmd();
         (void)readPhaseValues(sess, solvedValuesr);
