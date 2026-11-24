@@ -1865,6 +1865,9 @@ class ConstVisitor final : public VNVisitor {
         // Must not create an expression with unpacked array type
         if (VN_IS(thensp->rhsp()->dtypep()->skipRefp(), UnpackArrayDType)) return false;
         if (VN_IS(elsesp->rhsp()->dtypep()->skipRefp(), UnpackArrayDType)) return false;
+        // Must stay the RHS of an assignment, else V3Premit evaluates it unconditionally
+        if (VN_IS(thensp->rhsp(), CvtPackedToArray)) return false;
+        if (VN_IS(elsesp->rhsp(), CvtPackedToArray)) return false;
         if (m_underRecFunc) return false;  // This optimization may lead to infinite recursion
         if (m_doCpp) {  // Do not combine ifs cretaed by V3Premit
             if (VN_IS(thensp->lhsp(), VarRef) && thensp->lhsp()->isWide()) return false;
@@ -2690,7 +2693,12 @@ class ConstVisitor final : public VNVisitor {
             replaceAssignToFixedAggregate(nodep, nodep->lhsp()->unlinkFrBack(), srcp);
             return true;
         } else if (m_doV && VN_IS(nodep->rhsp(), StreamR)
-                   && !VN_IS(nodep->lhsp()->dtypep()->skipRefp(), QueueDType)) {
+                   && (!VN_IS(nodep->lhsp()->dtypep()->skipRefp(), QueueDType)
+                       || VN_AS(nodep->rhsp(), StreamR)
+                              ->lhsp()
+                              ->dtypep()
+                              ->skipRefp()
+                              ->isNonPackedArray())) {
             // The right-streaming operator on rhs of assignment does not
             // change the order of bits. Eliminate stream but keep its lhsp.
             // Add a cast if needed.
@@ -2716,6 +2724,17 @@ class ConstVisitor final : public VNVisitor {
                 } else {
                     srcp = new AstCvtArrayToPacked{srcp->fileline(), srcp, nodep->dtypep()};
                 }
+            } else if (VN_IS(srcDTypep, UnpackArrayDType)
+                       && (VN_IS(dstDTypep, QueueDType) || VN_IS(dstDTypep, DynArrayDType))) {
+                // Element by element, in order of the declared range
+                srcp = new AstCvtArrayToArray{
+                    srcp->fileline(),
+                    srcp,
+                    nodep->dtypep(),
+                    !VN_AS(srcDTypep, UnpackArrayDType)->declRange().ascending(),
+                    1,
+                    dstDTypep->subDTypep()->width(),
+                    srcDTypep->subDTypep()->width()};
             } else if (VN_IS(srcDTypep, UnpackArrayDType)) {
                 // Pack to the width of the whole array; the lhs width is matched below.
                 const int elementsNum = srcDTypep->arrayUnpackedElements();

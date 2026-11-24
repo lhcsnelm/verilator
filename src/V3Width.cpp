@@ -1307,6 +1307,9 @@ class WidthVisitor final : public VNVisitor {
         if (m_vup->prelim()) {
             m_streamConcat = true;
             iterateCheckSelf(nodep, "LHS", nodep->lhsp(), SELF, BOTH);
+            if (AstConcat* const concatp = VN_CAST(nodep->lhsp(), Concat)) {
+                replaceDynamicConcat(concatp);
+            }
             m_streamConcat = false;
             iterateCheckSelf(nodep, "RHS", nodep->rhsp(), SELF, BOTH);
             V3Const::constifyParamsEdit(nodep->rhsp());  // rhsp may change
@@ -3906,6 +3909,144 @@ class WidthVisitor final : public VNVisitor {
         nodep->replaceWith(afterTemps(bits, valuep));
         VL_DO_DANGLING(pushDeletep(nodep), nodep);
     }
+    // Append the operands of a concatenation, leftmost first
+    static void concatOperands(AstNodeExpr* const nodep, std::vector<AstNodeExpr*>& operandps) {
+        if (AstConcat* const concatp = VN_CAST(nodep, Concat)) {
+            concatOperands(concatp->lhsp(), operandps);
+            concatOperands(concatp->rhsp(), operandps);
+        } else {
+            operandps.push_back(nodep);
+        }
+    }
+    // The queue of the bits of a streaming concatenation of packed values and of dynamic arrays
+    // or queues of packed elements, at least one, else nullptr
+    AstQueueDType* dynamicConcatBitsDTypep(const std::vector<AstNodeExpr*>& operandps) {
+        bool dynamic = false;
+        bool fourstate = false;
+        for (const AstNodeExpr* const operandp : operandps) {
+            const AstNodeDType* bitsDtp = operandp->dtypep()->skipRefp();
+            if (!bitsDtp->isIntegralOrPacked()) {
+                if (!VN_IS(bitsDtp, DynArrayDType) && !VN_IS(bitsDtp, QueueDType)) return nullptr;
+                bitsDtp = bitsDtp->subDTypep()->skipRefp();
+                if (!bitsDtp->isIntegralOrPacked()) return nullptr;
+                dynamic = true;
+            }
+            fourstate |= bitsDtp->isFourstate();
+        }
+        if (!dynamic) return nullptr;
+        return queueDTypeIndexedBy(
+            operandps.front()->findBitOrLogicDType(1, 1, VSigning::UNSIGNED, fourstate));
+    }
+    // Replace such a streaming concatenation streamed from with the queue of its bits
+    void replaceDynamicConcat(AstConcat* const concatp) {
+        std::vector<AstNodeExpr*> operandps;
+        concatOperands(concatp, operandps);
+        if (operandps.front()->isLValue()) return;  // Unpacked into, see unpackDynamicConcat
+        AstQueueDType* const queueDtp = dynamicConcatBitsDTypep(operandps);
+        if (!queueDtp) return;
+        FileLine* const flp = concatp->fileline();
+        AstConsQueue* const consp = new AstConsQueue{flp};
+        consp->dtypep(queueDtp);
+        for (AstNodeExpr* const operandp : operandps) {
+            operandp->unlinkFrBack();
+            const AstNodeDType* const dtypep = operandp->dtypep()->skipRefp();
+            AstNodeExpr* bitsp;
+            if (dtypep->isIntegralOrPacked()) {
+                bitsp = new AstCvtPackedToArray{flp, operandp, nullptr};
+            } else {
+                bitsp = new AstCvtArrayToArray{flp, operandp, nullptr, false, 1, 1,
+                                               dtypep->subDTypep()->width()};
+            }
+            bitsp->dtypep(queueDtp);
+            consp->addItemsp(new AstConsQueueItem{flp, bitsp});
+        }
+        concatp->replaceWith(consp);
+        VL_DO_DANGLING(pushDeletep(concatp), concatp);
+    }
+    // Replace an assignment unpacking from or into such values, of a stream or its streaming
+    // concatenation, with the stream's bits in a queue, then assignments to each operand of its
+    // bits. The first dynamically sized operand takes all the whole elements before the fixed
+    // size operands after it, and later ones none (IEEE 1800-2023 11.4.14.4). Return whether
+    // replaced.
+    bool unpackDynamicConcat(AstNodeAssign* const nodep) {
+        AstNodeStream* const streamp = VN_CAST(nodep->lhsp(), NodeStream);
+        if (!streamp || VN_IS(nodep, AssignW)) return false;
+        std::vector<AstNodeExpr*> operandps;
+        concatOperands(streamp->lhsp(), operandps);
+        std::vector<AstNodeExpr*> valueps = operandps;  // With the source
+        valueps.push_back(nodep->rhsp());
+        AstQueueDType* const queueDtp = dynamicConcatBitsDTypep(valueps);
+        if (!queueDtp) return false;
+        FileLine* const flp = nodep->fileline();
+        const auto newIntp = [flp](int value) {
+            return new AstConst{flp, AstConst::Signed32{}, value};
+        };
+        AstVar* const varp
+            = makeTempVarp(m_bitstreamTempNames.get(nodep), nodep->rhsp(), queueDtp);
+        AstNodeExpr* const srcp = nodep->rhsp()->unlinkFrBack();
+        AstNodeExpr* const slicep = streamp->rhsp()->unlinkFrBack();
+        AstNodeExpr* bitsp;
+        if (VN_IS(streamp, StreamL)) {
+            bitsp = new AstStreamL{flp, srcp, slicep};
+        } else {
+            bitsp = new AstStreamR{flp, srcp, slicep};
+        }
+        AstAssign* const assignp
+            = new AstAssign{flp, new AstVarRef{flp, varp, VAccess::WRITE}, bitsp};
+        if (nodep->timingControlp()) {
+            assignp->timingControlp(nodep->timingControlp()->unlinkFrBack());
+        }
+        AstNodeStmt* stmtsp = assignp;
+        int afterWidth = 0;  // Width of the fixed size operands after the first dynamic one
+        bool dynamic = false;
+        for (const AstNodeExpr* const operandp : operandps) {
+            if (operandp->dtypep()->skipRefp()->isIntegralOrPacked()) {
+                if (dynamic) afterWidth += operandp->width();
+            } else {
+                dynamic = true;
+            }
+        }
+        AstNodeExpr* offsetp = newIntp(0);  // Of the next operand's bits in the queue
+        dynamic = false;
+        for (AstNodeExpr* const operandp : operandps) {
+            operandp->unlinkFrBack();
+            const AstNodeDType* const dtypep = operandp->dtypep()->skipRefp();
+            AstNodeExpr* widthp;
+            if (dtypep->isIntegralOrPacked()) {
+                widthp = newIntp(operandp->width());
+            } else if (!dynamic) {
+                dynamic = true;
+                // The whole elements in the bits left for this operand
+                AstNodeExpr* const sizep
+                    = new AstMethodCall{flp, new AstVarRef{flp, varp, VAccess::READ}, "size"};
+                AstNodeExpr* const leftp = new AstSub{
+                    flp, new AstSub{flp, sizep, offsetp->cloneTree(false)}, newIntp(afterWidth)};
+                const int elemWidth = dtypep->subDTypep()->width();
+                widthp = new AstMul{flp, new AstDiv{flp, leftp, newIntp(elemWidth)},
+                                    newIntp(elemWidth)};
+            } else {
+                AstNodeStmt* const emptyp = nodep->cloneType(operandp, new AstEmptyQueue{flp});
+                stmtsp = AstNode::addNext(stmtsp, emptyp);
+                continue;
+            }
+            AstNodeExpr* const endp = new AstAdd{flp, offsetp, widthp};
+            AstNodeExpr* const bitSlicep
+                = new AstSelExtract{flp, new AstVarRef{flp, varp, VAccess::READ},
+                                    offsetp->cloneTree(false), new AstSub{flp, endp, newIntp(1)}};
+            AstNodeStmt* const operandAssignp
+                = nodep->cloneType(operandp, new AstStreamR{flp, bitSlicep, newIntp(1)});
+            stmtsp = AstNode::addNext(stmtsp, operandAssignp);
+            offsetp = endp->cloneTree(false);
+        }
+        VL_DO_DANGLING(offsetp->deleteTree(), offsetp);
+        // Width the statements under a holder, as iterating requires a node with a parent
+        AstBegin* const holderp = new AstBegin{flp, "[EditWrapper]", stmtsp, false};
+        userIterateAndNext(holderp->stmtsp(), nullptr);
+        nodep->replaceWith(holderp->stmtsp()->unlinkFrBackWithNext());
+        VL_DO_DANGLING(holderp->deleteTree(), holderp);
+        VL_DO_DANGLING(pushDeletep(nodep), nodep);
+        return true;
+    }
     // How a stream takes the bits of the values its operand concatenates: all packed, as they
     // are, or else all of a fixed size, by packBitstream, or else not, as one is of another type,
     // e.g. dynamically sized, which is set in 'otherDtpp' for the last such
@@ -3924,6 +4065,40 @@ class WidthVisitor final : public VNVisitor {
         if (dtypep->isStreamableFixedAggregate()) return StreamBits::FIXED;
         if (otherDtpp) *otherDtpp = dtypep;
         return StreamBits::OTHER;
+    }
+    // Pack a dynamically sized stream operand to the width of a fixed size target, the stream
+    // left justified in it (IEEE 1800-2023 11.4.14)
+    static void packDynamicStream(AstNodeStream* const streamp, int width) {
+        FileLine* const flp = streamp->fileline();
+        AstNodeExpr* const srcp = streamp->lhsp()->unlinkFrBack();
+        AstNodeDType* const packedDtp
+            = streamp->findBitOrLogicDType(width, width, VSigning::UNSIGNED,
+                                           srcp->dtypep()->isFourstate());
+        AstNodeExpr* packedp = new AstCvtArrayToPacked{flp, srcp, packedDtp};
+        // Packing right justifies the elements; a left stream reverses them to the left
+        if (VN_IS(streamp, StreamR)) {
+            AstCMethodHard* const sizep
+                = new AstCMethodHard{flp, srcp->cloneTreePure(false), VCMethod::DYN_SIZE};
+            sizep->dtypeSetUInt32();
+            const int elemWidth = srcp->dtypep()->skipRefp()->subDTypep()->width();
+            AstNodeExpr* const bitsp
+                = new AstMul{flp, sizep, new AstConst{flp, static_cast<uint32_t>(elemWidth)}};
+            bitsp->dtypeSetUInt32();
+            AstNodeExpr* const subp = new AstSub{
+                flp, new AstConst{flp, static_cast<uint32_t>(width)}, bitsp->cloneTreePure(false)};
+            subp->dtypeSetUInt32();
+            AstNodeExpr* const fitsp
+                = new AstLt{flp, bitsp, new AstConst{flp, static_cast<uint32_t>(width)}};
+            fitsp->dtypeSetBit();
+            // A stream wider than the target, which is warned about, keeps its rightmost bits
+            AstNodeExpr* const shiftp
+                = new AstCond{flp, fitsp, subp, new AstConst{flp, static_cast<uint32_t>(0)}};
+            shiftp->dtypeSetUInt32();
+            packedp = new AstShiftL{flp, packedp, shiftp, width};
+            packedp->dtypep(packedDtp);
+        }
+        streamp->lhsp(packedp);
+        streamp->dtypep(packedDtp);
     }
     // Replace the operand of a stream of fixed-size values, some unpacked, with a concatenation
     // of their bits, so the stream has their packed width, e.g. in a cast or another stream
@@ -7889,6 +8064,7 @@ class WidthVisitor final : public VNVisitor {
             // AstPattern needs to know the proposed data type of the lhs, so pass on the prelim
             // UINFOTREE(1, nodep, "", "assrhs");
             userIterateAndNext(nodep->rhsp(), WidthVP{nodep->dtypep(), PRELIM}.p());
+            if (unpackDynamicConcat(nodep)) return;
             //
             // UINFOTREE(1, nodep, "", "assign");
             streamAssignLower(nodep);
@@ -12443,8 +12619,39 @@ public:
             if (VN_IS(lhsDTypeSkippedRefp, UnpackArrayDType)
                 || lowerAsFixedAggregate(lhsDTypeSkippedRefp)) {
                 streamp->unlinkFrBack();
+                const AstNodeDType* const srcDtp = streamp->lhsp()->dtypep()->skipRefp();
+                if (VN_IS(srcDtp, QueueDType) || VN_IS(srcDtp, DynArrayDType)) {
+                    packDynamicStream(streamp, lwidth);
+                }
                 nodep->rhsp(
                     new AstCvtPackedToArray{streamp->fileline(), streamp, lhsDTypeSkippedRefp});
+            } else if (lhsDTypeSkippedRefp->isIntegralOrPacked()
+                       && (VN_IS(streamp->lhsp()->dtypep()->skipRefp(), QueueDType)
+                           || VN_IS(streamp->lhsp()->dtypep()->skipRefp(), DynArrayDType))) {
+                packDynamicStream(streamp, lwidth);
+            } else if ((VN_IS(lhsDTypeSkippedRefp, DynArrayDType)
+                        || VN_IS(lhsDTypeSkippedRefp, QueueDType))
+                       && streamp->lhsp()->dtypep()->skipRefp()->isIntegralOrPacked()) {
+                // The elements take the packed stream from its MSB, the last one zero padded
+                // on the right (IEEE 1800-2023 11.4.14)
+                streamp->unlinkFrBack();
+                AstNodeExpr* fromp = streamp;
+                // A right stream does not reorder a packed value
+                if (VN_IS(streamp, StreamR)) {
+                    fromp = streamp->lhsp()->unlinkFrBack();
+                    VL_DO_DANGLING(pushDeletep(streamp), streamp);
+                }
+                const int elemWidth = lhsDTypeSkippedRefp->subDTypep()->width();
+                const int padWidth = (elemWidth - fromp->width() % elemWidth) % elemWidth;
+                if (padWidth) {
+                    fromp = new AstConcat{
+                        fromp->fileline(), fromp,
+                        new AstConst{fromp->fileline(), AstConst::WidthedValue{}, padWidth, 0}};
+                    // Widthed, so a stream under it is not seen as an implicit cast
+                    fromp->didWidth(true);
+                }
+                nodep->rhsp(
+                    new AstCvtPackedToArray{fromp->fileline(), fromp, lhsDTypeSkippedRefp});
             }
         }
         if (AstNodeStream* const streamp = VN_CAST(nodep->lhsp(), NodeStream)) {
