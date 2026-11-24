@@ -2633,11 +2633,10 @@ class RandomizeVisitor final : public VNVisitor {
                         basicStmtsp,
                         new AstAssign{fl, new AstVarRef{fl, indexVarp, VAccess::WRITE}, indexp});
                     basicStmtsp = AstNode::addNextNull(
-                        basicStmtsp,
-                        new AstAssign{fl, new AstVarRef{fl, refvarp, VAccess::WRITE},
-                                      new AstArraySel{fl, enumValueTabRefp(enumDtp),
-                                                      new AstVarRef{fl, indexVarp,
-                                                                    VAccess::READ}}});
+                        basicStmtsp, new AstAssign{fl, new AstVarRef{fl, refvarp, VAccess::WRITE},
+                                                   new AstArraySel{fl, enumValueTabRefp(enumDtp),
+                                                                   new AstVarRef{fl, indexVarp,
+                                                                                 VAccess::READ}}});
                     continue;
                 }
                 AstCMethodHard* const basicMethodp = new AstCMethodHard{

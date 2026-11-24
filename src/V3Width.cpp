@@ -3072,16 +3072,15 @@ class WidthVisitor final : public VNVisitor {
                                                      "queue of dynamically sized elements");
                         newp = new AstConst{nodep->fileline(), AstConst::Signed32{}, 0};
                     } else {
-                        AstNodeExpr* const fromp
-                            = VN_AS(nodep->fromp()->unlinkFrBack(), NodeExpr);
+                        AstNodeExpr* const fromp = VN_AS(nodep->fromp()->unlinkFrBack(), NodeExpr);
                         AstNodeExpr* const sizep
                             = new AstCMethodHard{nodep->fileline(), fromp, VCMethod::DYN_SIZE};
                         sizep->dtypeSetInt();
                         sizep->didWidth(true);
                         sizep->protect(false);
-                        newp = new AstMul{nodep->fileline(), sizep,
-                                          dimensionValue(nodep->fileline(), elemDTypep,
-                                                         VAttrType::DIM_BITS, 1)};
+                        newp = new AstMul{
+                            nodep->fileline(), sizep,
+                            dimensionValue(nodep->fileline(), elemDTypep, VAttrType::DIM_BITS, 1)};
                     }
                     nodep->replaceWith(newp);
                     VL_DO_DANGLING(pushDeletep(nodep), nodep);
@@ -4021,8 +4020,8 @@ class WidthVisitor final : public VNVisitor {
             if (dtypep->isIntegralOrPacked()) {
                 bitsp = new AstCvtPackedToArray{flp, operandp, nullptr};
             } else {
-                bitsp = new AstCvtArrayToArray{flp, operandp, nullptr, false, 1, 1,
-                                               dtypep->subDTypep()->width()};
+                bitsp = new AstCvtArrayToArray{
+                    flp, operandp, nullptr, false, 1, 1, dtypep->subDTypep()->width()};
             }
             bitsp->dtypep(queueDtp);
             consp->addItemsp(new AstConsQueueItem{flp, bitsp});
@@ -4045,9 +4044,8 @@ class WidthVisitor final : public VNVisitor {
         AstQueueDType* const queueDtp = dynamicConcatBitsDTypep(valueps);
         if (!queueDtp) return false;
         FileLine* const flp = nodep->fileline();
-        const auto newIntp = [flp](int value) {
-            return new AstConst{flp, AstConst::Signed32{}, value};
-        };
+        const auto newIntp
+            = [flp](int value) { return new AstConst{flp, AstConst::Signed32{}, value}; };
         AstVar* const varp
             = makeTempVarp(m_bitstreamTempNames.get(nodep), nodep->rhsp(), queueDtp);
         AstNodeExpr* const srcp = nodep->rhsp()->unlinkFrBack();
@@ -4140,9 +4138,8 @@ class WidthVisitor final : public VNVisitor {
     static void packDynamicStream(AstNodeStream* const streamp, int width) {
         FileLine* const flp = streamp->fileline();
         AstNodeExpr* const srcp = streamp->lhsp()->unlinkFrBack();
-        AstNodeDType* const packedDtp
-            = streamp->findBitOrLogicDType(width, width, VSigning::UNSIGNED,
-                                           srcp->dtypep()->isFourstate());
+        AstNodeDType* const packedDtp = streamp->findBitOrLogicDType(
+            width, width, VSigning::UNSIGNED, srcp->dtypep()->isFourstate());
         AstNodeExpr* packedp = new AstCvtArrayToPacked{flp, srcp, packedDtp};
         // Packing right justifies the elements; a left stream reverses them to the left
         if (VN_IS(streamp, StreamR)) {
@@ -6502,8 +6499,8 @@ class WidthVisitor final : public VNVisitor {
             }
             AstNode* memberp = m_memberMap.findMember(classp, nodep->name());
             if (classp->isCovergroup() && VN_IS(memberp, Var)) {
-                memberp = m_memberMap.findMember(
-                    classp, AstClass::covergroupMethodName(nodep->name()));
+                memberp = m_memberMap.findMember(classp,
+                                                 AstClass::covergroupMethodName(nodep->name()));
             }
             if (AstNodeFTask* const ftaskp = VN_CAST(memberp, NodeFTask)) {
                 userIterate(ftaskp, nullptr);

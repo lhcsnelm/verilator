@@ -269,7 +269,7 @@ class FunctionalCoverageVisitor final : public VNVisitor {
     AstClass* m_enclosingClassp = nullptr;  // Class lexically enclosing the covergroup, if any
     AstVar* m_embeddedVarp = nullptr;  // Embedded covergroup member of m_enclosingClassp, if any
     AstVar* m_enclosingHandlep = nullptr;  // Member of the covergroup referring to its enclosing
-                                            // object, if its items use members of that class
+                                           // object, if its items use members of that class
     std::string m_covergroupName;  // Current covergroup's type name, see covergroupTypeName()
     AstFunc* m_sampleFuncp = nullptr;  // Current sample() function
     AstIf* m_cpGuardp = nullptr;  // Current coverpoint's iff guard, holding its sampling
@@ -2005,7 +2005,7 @@ class FunctionalCoverageVisitor final : public VNVisitor {
         // The count, and whether it is positive; one of a scalar bin, or of an array without a
         // size more than its values, so a bin per value
         const std::pair<AstNodeExpr*, AstNodeExpr*> count
-            = binp->arraySizep() ? newCountArgs(fl, prefix + "_count", binp->arraySizep())
+            = binp->arraySizep()          ? newCountArgs(fl, prefix + "_count", binp->arraySizep())
               : binp->isArray() && !withp ? newCountArgs(fl, std::numeric_limits<uint64_t>::max())
                                           : newCountArgs(fl, 1);
         if (withp && !binRangesp(binp)) {  // The coverpoint's name: all of its values

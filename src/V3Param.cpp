@@ -1551,8 +1551,7 @@ class ParamProcessor final {
         // The type as declared, as the template may be widthed as its default specialization
         if (AstNodeDType* const origDTypep = unalteredParam(modvarp)->subDTypep()) {
             // Attach clone under cloneVarp so the root has a back pointer.
-            if (cloneVarp->childDTypep())
-                cloneVarp->childDTypep()->unlinkFrBack()->deleteTree();
+            if (cloneVarp->childDTypep()) cloneVarp->childDTypep()->unlinkFrBack()->deleteTree();
             cloneVarp->childDTypep(origDTypep->cloneTree(false));
             cloneVarp->dtypep(nullptr);
             // The template may be widthed as its default specialization
@@ -1571,8 +1570,7 @@ class ParamProcessor final {
                     for (AstPin* const pp : VNList<AstPin>{paramsp}) {
                         if (pp->modVarp() == targetp) {
                             // A pattern or array override names the value too
-                            if (VN_IS(pp->exprp(), Const)
-                                || VN_IS(pp->exprp(), Pattern)
+                            if (VN_IS(pp->exprp(), Const) || VN_IS(pp->exprp(), Pattern)
                                 || VN_IS(pp->exprp(), ConsArray)) {
                                 replacep = pp->exprp()->cloneTree(false);
                             }
@@ -1600,8 +1598,7 @@ class ParamProcessor final {
                 // reverse so descendants aren't freed early.
                 std::vector<std::pair<AstRefDType*, AstNodeDType*>> toReplace;
                 cloneVarp->foreach([&](AstRefDType* refp) {
-                    AstParamTypeDType* const ptdp
-                        = VN_CAST(refp->refDTypep(), ParamTypeDType);
+                    AstParamTypeDType* const ptdp = VN_CAST(refp->refDTypep(), ParamTypeDType);
                     if (!ptdp) return;
                     AstPin* overridePinp = nullptr;
                     for (AstPin* const pp : VNList<AstPin>{paramsp}) {
@@ -1610,9 +1607,9 @@ class ParamProcessor final {
                             break;
                         }
                     }
-                    AstNodeDType* const substp
-                        = overridePinp ? VN_CAST(overridePinp->exprp(), NodeDType)
-                                       : ptdp->subDTypep();
+                    AstNodeDType* const substp = overridePinp
+                                                     ? VN_CAST(overridePinp->exprp(), NodeDType)
+                                                     : ptdp->subDTypep();
                     if (substp) toReplace.emplace_back(refp, substp);
                 });
                 for (auto it = toReplace.rbegin(); it != toReplace.rend(); ++it) {
@@ -1756,8 +1753,7 @@ class ParamProcessor final {
                                 || (exprp->num().width() == origp->num().width()
                                     && ParameterizedHierBlocks::areSame(exprp, origp))
                                 || paramConstsEqualAtMaxWidth(exprp, origp)))
-                           || (defaultp
-                               && normedNamep->num().width() == defaultp->num().width()
+                           || (defaultp && normedNamep->num().width() == defaultp->num().width()
                                && normedNamep->num().isCaseEq(defaultp->num()))) {
                     // Setting parameter to its default value.  Just ignore it.
                     // This prevents making additional modules, and makes coverage more

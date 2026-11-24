@@ -155,7 +155,7 @@ class ConstraintExprVisitor final : public VNVisitor {
     // Setup task of the class constraint lowered, if not inline, which classes derived from its
     // class also call, unlike that class's __Vsetup_constraints
     AstNodeFTask* m_constraintTaskp = nullptr;
-                                         // (may be null, then new() is used)
+    // (may be null, then new() is used)
     AstNodeFTask* const m_memberrefInitTaskp;  // Fallback for memberref write_var when
                                                // classp has no randomize() (inherited members)
     AstVar* const m_genp;  // VlRandomizer variable of the class
@@ -1278,10 +1278,9 @@ class ConstraintExprVisitor final : public VNVisitor {
                 = createEnumConstraint(nodep->fileline(), varp->name(), enumDtp, genVarp);
             AstBegin* targetp = m_inlineInitBlockp;
             if (!targetp) {
-                targetp = newInitBlockp(
-                    m_constraintTaskp
-                        ? m_constraintTaskp
-                        : SmtUtil::getCreateConstraintSetupFunc(m_classp, m_memberMap));
+                targetp = newInitBlockp(m_constraintTaskp ? m_constraintTaskp
+                                                          : SmtUtil::getCreateConstraintSetupFunc(
+                                                                m_classp, m_memberMap));
             }
             targetp->addStmtsp(enumRangeExprp->makeStmt());
             m_rangeConstrainedEnums.push_back(varp);
@@ -3529,9 +3528,7 @@ class SolverSmtLowering final : public V3SolverLowering {
     // A non-rand value can never be re-drawn; a non-rand owner level is skipped.
     AstNodeExpr* newVarGate(AstVar* varp, const AstMemberRef* memberRefp, bool ownerLevel,
                             AstVar* randModeVarp, FileLine* fl) {
-        if (!isDrawnVar(varp)) {
-            return new AstConst{fl, AstConst::BitTrue{}, ownerLevel};
-        }
+        if (!isDrawnVar(varp)) { return new AstConst{fl, AstConst::BitTrue{}, ownerLevel}; }
         const RandomizeMode rmode = {.asUQuad = varp->user1()};
         if (!rmode.usesMode) return new AstConst{fl, AstConst::BitTrue{}};
         return newModeBitRead(varp, memberRefp, randModeVarp, fl);
@@ -3664,8 +3661,8 @@ class SolverSmtLowering final : public V3SolverLowering {
         softp->user1(true);
         chainp->exprp(softp);
         AstNodeConstraintItem* const itemsp = chainp;
-        itemsp->addNext(new AstConstraintIf{fl, notGatep, buildFrozenMembership(distp, buckets),
-                                            nullptr});
+        itemsp->addNext(
+            new AstConstraintIf{fl, notGatep, buildFrozenMembership(distp, buckets), nullptr});
         return itemsp;
     }
 
@@ -3892,9 +3889,9 @@ class SolverSmtLowering final : public V3SolverLowering {
                 cumSums.push_back(runningSump->cloneTreePure(true));
             }
 
-            AstNodeConstraintItem* const chainp = gateFrozenDist(
-                buildWeightedBucketChain(distp, buckets, bucketVarp, cumSums), distp, buckets,
-                randModeVarp);
+            AstNodeConstraintItem* const chainp
+                = gateFrozenDist(buildWeightedBucketChain(distp, buckets, bucketVarp, cumSums),
+                                 distp, buckets, randModeVarp);
 
             if (guardsp && !guardsp->empty()) {
                 // Folding an if/else constraint makes its items one hard constraint, so the

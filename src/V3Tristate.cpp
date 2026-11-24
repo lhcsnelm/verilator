@@ -642,8 +642,8 @@ class TristateStrengthVisitor final : public VNVisitor {
             }
             return new AstConst{flp, num};
         }
-        AstNodeExpr* const enp = value ? rhsp->cloneTreePure(false)
-                                       : new AstNot{flp, rhsp->cloneTreePure(false)};
+        AstNodeExpr* const enp
+            = value ? rhsp->cloneTreePure(false) : new AstNot{flp, rhsp->cloneTreePure(false)};
         V3Number num{rhsp, rhsp->width(), 0};
         if (value) num.setAllBits1();
         AstNodeExpr* const newp = new AstBufIf1{flp, enp, new AstConst{flp, num}};
@@ -2704,14 +2704,13 @@ class TristateVisitor final : public TristateBaseVisitor {
                 for (const auto& pair : m_varAux(nodep->modVarp()).strengthOutps) {
                     FileLine* const fl = nodep->fileline();
                     AstVar* const modEnVarp = VN_AS(pair.second->user1p(), Var);
-                    AstVar* const strengthEnVarp
-                        = new AstVar{fl, VVarType::MODULETEMP,
-                                     modEnVarp->name() + cvtToStr(m_unique++), VFlagBitPacked{},
-                                     modEnVarp->width()};
+                    AstVar* const strengthEnVarp = new AstVar{
+                        fl, VVarType::MODULETEMP, modEnVarp->name() + cvtToStr(m_unique++),
+                        VFlagBitPacked{}, modEnVarp->width()};
                     m_modp->addStmtsp(strengthEnVarp);
-                    AstPin* const enPinp = new AstPin{
-                        fl, nodep->pinNum(), modEnVarp->name(),
-                        new AstVarRef{fl, strengthEnVarp, VAccess::WRITE}};
+                    AstPin* const enPinp
+                        = new AstPin{fl, nodep->pinNum(), modEnVarp->name(),
+                                     new AstVarRef{fl, strengthEnVarp, VAccess::WRITE}};
                     enPinp->modVarp(modEnVarp);
                     enPinp->user2Or(U2_BOTH);
                     nodep->addNextHere(enPinp);

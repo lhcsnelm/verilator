@@ -833,8 +833,8 @@ private:
         // IEEE 1800-2023 14.16 does not allow it
         AstNodeStmt* setsp = nullptr;
         for (const SynchDrive& drive : m_drives) {
-            setsp = AstNode::addNext(setsp,
-                                     newDrivenSetp(nodep->fileline(), drive, nodep->lhsp()));
+            setsp
+                = AstNode::addNext(setsp, newDrivenSetp(nodep->fileline(), drive, nodep->lhsp()));
         }
         if (!setsp) return;
         if (AstEventControl* const controlp = VN_CAST(nodep->timingControlp(), EventControl)) {

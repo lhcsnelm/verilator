@@ -518,8 +518,8 @@ class LinkCellsVisitor final : public VNVisitor {
             stmtsp = modp->stmtsp();
         }
         if (!cellp) {
-            segps.back()->v3error("Bind target is not an instance: "
-                                  << segps.back()->prettyNameQ());
+            segps.back()->v3error(
+                "Bind target is not an instance: " << segps.back()->prettyNameQ());
             return nullptr;
         }
         if (typep && modp->origName() != typep->origName()) {
