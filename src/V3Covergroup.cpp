@@ -371,14 +371,13 @@ class FunctionalCoverageVisitor final : public VNVisitor {
     // 'option.<member>' or 'type_option.<member>', per optionVarp
     AstStructSel* newOptionSel(FileLine* fl, AstVar* optionVarp, const std::string& member,
                                VAccess access) {
-        const AstMemberDType* const memberp
+        AstMemberDType* const memberp
             = VN_AS(m_memberMap.findMember(optionVarp->dtypep()->skipRefp(), member), MemberDType);
         UASSERT_OBJ(memberp, optionVarp, "Coverage option structure missing '" << member << "'");
         AstNodeExpr* const fromp = optionVarp->lifetime().isStatic()
                                        ? new AstVarRef{fl, optionVarp, access}
                                        : memberRef(fl, optionVarp, access);
-        AstStructSel* const selp = new AstStructSel{fl, fromp, member};
-        selp->dtypep(memberp->subDTypep()->skipRefToEnump());
+        AstStructSel* const selp = new AstStructSel{fl, fromp, memberp};
         selp->didWidth(true);
         return selp;
     }
@@ -949,7 +948,7 @@ class FunctionalCoverageVisitor final : public VNVisitor {
     void createEnumAutoBins(AstCoverpoint* coverpointp, AstNodeExpr* exprp,
                             const AstEnumDType* enump) {
         FileLine* const fl = coverpointp->fileline();
-        for (const AstEnumItem* const itemp : enump->itemspList()) {
+        for (const AstEnumItem* const itemp : enump->originalOrThisDTypep()->itemspList()) {
             const V3Number& num = VN_AS(itemp->valuep(), Const)->num();
             if (num.isFourState()) continue;  // Not a coverpoint value (IEEE 1800-2023 19.5.7)
             AstConst* const lop = newValueConst(fl, num, exprp);
@@ -1971,7 +1970,7 @@ class FunctionalCoverageVisitor final : public VNVisitor {
             return runs;
         }
         std::vector<V3Number> values;
-        for (const AstEnumItem* const itemp : enump->itemspList()) {
+        for (const AstEnumItem* const itemp : enump->originalOrThisDTypep()->itemspList()) {
             const V3Number& num = VN_AS(itemp->valuep(), Const)->num();
             if (num.isFourState()) continue;  // Not a coverpoint value (19.5.7)
             values.emplace_back(nodep, width);
