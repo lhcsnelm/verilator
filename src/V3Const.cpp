@@ -1865,6 +1865,9 @@ class ConstVisitor final : public VNVisitor {
         // Must not create an expression with unpacked array type
         if (VN_IS(thensp->rhsp()->dtypep()->skipRefp(), UnpackArrayDType)) return false;
         if (VN_IS(elsesp->rhsp()->dtypep()->skipRefp(), UnpackArrayDType)) return false;
+        // Must stay the RHS of an assignment, else V3Premit evaluates it unconditionally
+        if (VN_IS(thensp->rhsp(), CvtPackedToArray)) return false;
+        if (VN_IS(elsesp->rhsp(), CvtPackedToArray)) return false;
         if (m_underRecFunc) return false;  // This optimization may lead to infinite recursion
         if (m_doCpp) {  // Do not combine ifs cretaed by V3Premit
             if (VN_IS(thensp->lhsp(), VarRef) && thensp->lhsp()->isWide()) return false;
@@ -2691,8 +2694,11 @@ class ConstVisitor final : public VNVisitor {
             return true;
         } else if (m_doV && VN_IS(nodep->rhsp(), StreamR)
                    && (!VN_IS(nodep->lhsp()->dtypep()->skipRefp(), QueueDType)
-                       || VN_IS(VN_AS(nodep->rhsp(), StreamR)->lhsp()->dtypep()->skipRefp(),
-                                UnpackArrayDType))) {
+                       || VN_AS(nodep->rhsp(), StreamR)
+                              ->lhsp()
+                              ->dtypep()
+                              ->skipRefp()
+                              ->isNonPackedArray())) {
             // The right-streaming operator on rhs of assignment does not
             // change the order of bits. Eliminate stream but keep its lhsp.
             // Add a cast if needed.

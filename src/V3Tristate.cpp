@@ -449,10 +449,157 @@ public:
 };
 
 //######################################################################
+// A variable written z through a virtual interface, as by a class driver releasing a bus, keeps
+// whether each bit is z in an enable variable that every write to it updates. Its module reads it
+// through a net driven by its value under that enable, so that the nets it drives are released.
+// TristateVisitor lowers other writes of z as drivers.
+
+class TristateVarZVisitor final : public VNVisitor {
+    // NODE STATE
+    //  AstVar::user2p()    -> AstIface*. Interface declaring it, when written z through one
+    //  AstVar::user3p()    -> AstVar*. Net its interface reads it through
+    //  AstVar::user4p()    -> AstVar*. Its enable
+    const VNUser2InUse m_inuser2;
+    const VNUser3InUse m_inuser3;
+    const VNUser4InUse m_inuser4;
+
+    // STATE
+    AstNodeModule* m_modp = nullptr;  // Current module
+    bool m_replacing = false;  // Replacing reads by the net, else collecting writes
+    std::vector<std::pair<AstNodeAssign*, AstVar*>> m_writes;  // Procedural writes of variables
+    std::vector<AstVar*> m_zVarps;  // Variables written z, in order found
+
+    // METHODS
+    static AstNodeExpr* baseRefp(AstNodeExpr* lhsp) {
+        if (AstSel* const selp = VN_CAST(lhsp, Sel)) lhsp = selp->fromp();
+        return VN_IS(lhsp, NodeVarRef) || VN_IS(lhsp, MemberRef) ? lhsp : nullptr;
+    }
+    static AstVar* refVarp(AstNodeExpr* refp) {
+        if (AstNodeVarRef* const varrefp = VN_CAST(refp, NodeVarRef)) return varrefp->varp();
+        return VN_AS(refp, MemberRef)->varp();
+    }
+    static bool writesZ(const AstNodeExpr* rhsp) {
+        if (const AstCond* const condp = VN_CAST(rhsp, Cond)) {
+            return writesZ(condp->thenp()) || writesZ(condp->elsep());
+        }
+        const AstConst* const constp = VN_CAST(rhsp, Const);
+        return constp && constp->num().hasZ();
+    }
+    static AstNodeExpr* newEnablep(AstNodeExpr* rhsp) {
+        // Enable of the value written, and that value with z bits as 0
+        FileLine* const flp = rhsp->fileline();
+        if (AstCond* const condp = VN_CAST(rhsp, Cond)) {
+            return new AstCond{flp, condp->condp()->cloneTreePure(false),
+                               newEnablep(condp->thenp()), newEnablep(condp->elsep())};
+        }
+        AstConst* const enp = new AstConst{flp, AstConst::DTyped{}, rhsp->dtypep()};
+        if (AstConst* const constp = VN_CAST(rhsp, Const)) {
+            V3Number zs{constp, constp->width()};
+            zs.opBitsZ(constp->num());
+            enp->num().opNot(zs);
+            V3Number value{constp, constp->width()};
+            value.opBitsOne(constp->num());
+            constp->num() = value;
+        } else {
+            enp->num().setAllBits1();
+        }
+        return enp;
+    }
+    AstVar* getCreateZenp(AstVar* varp) {
+        if (varp->user4p()) return VN_AS(varp->user4p(), Var);
+        AstIface* const modp = VN_AS(varp->user2p(), Iface);
+        FileLine* const flp = varp->fileline();
+        AstVar* const zenp = new AstVar{flp, VVarType::VAR, varp->name() + "__Vzen", varp};
+        modp->addStmtsp(zenp);
+        AstVar* const netp = new AstVar{flp, VVarType::WIRE, varp->name() + "__Vtri", varp};
+        modp->addStmtsp(netp);
+        varp->user3p(netp);
+        varp->user4p(zenp);
+        m_zVarps.push_back(varp);
+        return zenp;
+    }
+    void addEnableWrite(AstNodeAssign* assignp, AstVar* zenp) {
+        AstNodeExpr* const lhsp = assignp->lhsp()->cloneTreePure(false);
+        AstNodeExpr* const refp = baseRefp(lhsp);
+        if (AstNodeVarRef* const varrefp = VN_CAST(refp, NodeVarRef)) {
+            varrefp->varp(zenp);
+            varrefp->name(zenp->name());
+        } else {
+            AstMemberRef* const memberrefp = VN_AS(refp, MemberRef);
+            memberrefp->varp(zenp);
+            memberrefp->name(zenp->name());
+        }
+        AstNodeAssign* const enAssignp = assignp->cloneType(lhsp, newEnablep(assignp->rhsp()));
+        if (assignp->timingControlp()) {
+            enAssignp->timingControlp(assignp->timingControlp()->cloneTree(false));
+        }
+        assignp->addNextHere(enAssignp);
+    }
+
+    // VISITORS
+    void visit(AstNodeModule* nodep) override {
+        VL_RESTORER(m_modp);
+        m_modp = nodep;
+        iterateChildren(nodep);
+    }
+    void visit(AstNodeAssign* nodep) override {
+        if (!m_replacing && (VN_IS(nodep, Assign) || VN_IS(nodep, AssignDly))) {
+            if (AstNodeExpr* const refp = baseRefp(nodep->lhsp())) {
+                AstVar* const varp = refVarp(refp);
+                m_writes.emplace_back(nodep, varp);
+                const AstMemberRef* const memberrefp = VN_CAST(refp, MemberRef);
+                if (memberrefp && writesZ(nodep->rhsp())) {
+                    const AstNodeDType* const fromDtp = memberrefp->fromp()->dtypep()->skipRefp();
+                    if (const AstIfaceRefDType* const ifaceDtp = VN_CAST(fromDtp, IfaceRefDType)) {
+                        varp->user2p(ifaceDtp->ifacep());  // Else a class member
+                    }
+                }
+            }
+        }
+        iterateChildren(nodep);
+    }
+    void visit(AstVarRef* nodep) override {
+        AstVar* const netp = VN_CAST(nodep->varp()->user3p(), Var);
+        if (m_replacing && netp && nodep->access().isReadOnly()
+            && nodep->varp()->user2p() == m_modp) {
+            nodep->replaceWith(new AstVarRef{nodep->fileline(), netp, VAccess::READ});
+            VL_DO_DANGLING(pushDeletep(nodep), nodep);
+        }
+    }
+    void visit(AstNodeExpr* nodep) override { iterateChildren(nodep); }
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }
+
+public:
+    // CONSTRUCTORS
+    explicit TristateVarZVisitor(AstNetlist* nodep) {
+        iterate(nodep);
+        for (const auto& pair : m_writes) {
+            if (pair.second->user2p()) addEnableWrite(pair.first, getCreateZenp(pair.second));
+        }
+        if (m_zVarps.empty()) return;
+        m_replacing = true;
+        iterate(nodep);
+        for (AstVar* const varp : m_zVarps) {
+            AstVar* const netp = VN_AS(varp->user3p(), Var);
+            FileLine* const flp = netp->fileline();
+            AstBufIf1* const bufp
+                = new AstBufIf1{flp, new AstVarRef{flp, VN_AS(varp->user4p(), Var), VAccess::READ},
+                                new AstVarRef{flp, varp, VAccess::READ}};
+            bufp->dtypeFrom(varp);
+            VN_AS(varp->user2p(), Iface)
+                ->addStmtsp(new AstAlways{
+                    new AstAssignW{flp, new AstVarRef{flp, netp, VAccess::WRITE}, bufp}});
+        }
+    }
+    ~TristateVarZVisitor() override = default;
+};
+
+//######################################################################
 // Split each continuous assignment with unequal 0 and 1 strengths into assignments of a single
 // strength, one driving the 0 bits and one the 1 bits, as only assignments of equal strengths
 // resolve against other drivers. A highz strength drives nothing, so drops its assignment. An
-// only driver of its net is left as is unless highz, as then the strength does not matter.
+// only driver of a net that is not a port, so has no drivers in other modules, is left as is
+// unless highz, as then the strength does not matter.
 
 class TristateStrengthVisitor final : public VNVisitor {
     // NODE STATE
@@ -508,7 +655,7 @@ class TristateStrengthVisitor final : public VNVisitor {
         const VStrength s1 = nodep->strengthSpecp()->strength1();
         const bool highz = s0 == VStrength::HIGHZ || s1 == VStrength::HIGHZ;
         AstVar* const varp = drivenVarp(nodep->lhsp());
-        if (!varp || (varp->user1() < 2 && !highz)) return;
+        if (!varp || (varp->user1() < 2 && !varp->isIO() && !highz)) return;
         bool drives0 = false;
         bool drives1 = false;
         valuesDriven(nodep->rhsp(), drives0, drives1);
@@ -587,6 +734,8 @@ class TristateVisitor final : public TristateBaseVisitor {
     struct AuxAstVar final {
         AstPull* pullp = nullptr;  // pullup/pulldown direction (whole variable)
         AstVar* outVarp = nullptr;  // output __out var
+        // Output ports of non-strong drivers, by strength; their __en port is in user1p
+        std::vector<std::pair<VStrength, AstVar*>> strengthOutps;
         bool ifaceTristate = false;  // Interface var known to be tristate (set when the
                                      // interface module is processed). Lets a module that
                                      // drives this var across hierarchy with a plain (non-Z)
@@ -1378,6 +1527,17 @@ class TristateVisitor final : public TristateBaseVisitor {
             aggregateTriSameStrength(nodep, varStrengthp, enVarStrengthp, beginStrength,
                                      endStrength);
 
+            if (outvarp && !isTopInout && beginStrength->m_strength != VStrength::STRONG) {
+                // Export with its strength, to resolve against the parent's other drivers
+                varStrengthp->varType2Out();
+                enVarStrengthp->varType2Out();
+                varStrengthp->user1p(enVarStrengthp);
+                m_varAux(invarp).strengthOutps.emplace_back(beginStrength->m_strength,
+                                                            varStrengthp);
+                beginStrength = endStrength;
+                continue;
+            }
+
             AstNodeExpr* exprCurrentStrengthp;
             if (enp) {
                 // If weaker driver should be overwritten by a stronger, replace its value with z
@@ -1495,6 +1655,7 @@ class TristateVisitor final : public TristateBaseVisitor {
             nodep->addStmtsp(new AstAlways{enAssp});
         }
 
+        if (!orp) orp = newAllZerosOrOnes(invarp, false);  // All drivers exported by strength
         // __out (child) or <in> (parent) = drive-value expression
         AstAssignW* const assp = new AstAssignW{
             lhsp->fileline(), new AstVarRef{lhsp->fileline(), lhsp, VAccess::WRITE}, orp};
@@ -2537,6 +2698,36 @@ class TristateVisitor final : public TristateBaseVisitor {
                 // Propagate any pullups/pulldowns upwards if necessary
                 propagatePulls(exprrefp, m_varAux(nodep->modVarp()));
                 if (outAssignp) propagatePulls(outAssignp->lhsp(), m_varAux(nodep->modVarp()));
+
+                // Each non-strong child driver drives the net here with its own strength
+                AstNodeExpr* const netp = outAssignp ? outAssignp->lhsp() : exprrefp;
+                for (const auto& pair : m_varAux(nodep->modVarp()).strengthOutps) {
+                    FileLine* const fl = nodep->fileline();
+                    AstVar* const modEnVarp = VN_AS(pair.second->user1p(), Var);
+                    AstVar* const strengthEnVarp
+                        = new AstVar{fl, VVarType::MODULETEMP,
+                                     modEnVarp->name() + cvtToStr(m_unique++), VFlagBitPacked{},
+                                     modEnVarp->width()};
+                    m_modp->addStmtsp(strengthEnVarp);
+                    AstPin* const enPinp = new AstPin{
+                        fl, nodep->pinNum(), modEnVarp->name(),
+                        new AstVarRef{fl, strengthEnVarp, VAccess::WRITE}};
+                    enPinp->modVarp(modEnVarp);
+                    enPinp->user2Or(U2_BOTH);
+                    nodep->addNextHere(enPinp);
+                    AstNodeExpr* const strengthNetp = netp->cloneTreePure(false);
+                    AstPin* const strengthPinp
+                        = new AstPin{fl, nodep->pinNum(), pair.second->name(), strengthNetp};
+                    strengthPinp->modVarp(pair.second);
+                    strengthPinp->user2Or(U2_BOTH);
+                    nodep->addNextHere(strengthPinp);
+                    AstAssignW* const assignp
+                        = V3Inst::pinReconnectSimple(strengthPinp, m_cellp, true, true);
+                    assignp->strengthSpecp(new AstStrengthSpec{fl, pair.first, pair.first});
+                    VN_AS(assignp->rhsp(), VarRef)
+                        ->user1p(new AstVarRef{fl, strengthEnVarp, VAccess::READ});
+                    m_tgraph.setTristate(assignp);  // Keep it among the net's strength drivers
+                }
             }
             // Don't need to visit the created assigns, as it was added at
             // the end of the next links and normal iterateChild recursion
@@ -2832,6 +3023,7 @@ public:
 
 void V3Tristate::tristateAll(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ":");
+    { TristateVarZVisitor{nodep}; }
     { TristateStrengthVisitor{nodep}; }
     { TristateVisitor{nodep}; }  // Destruct before checking
     V3Global::dumpCheckGlobalTree("tristate", 0, dumpTreeEitherLevel() >= 3);
