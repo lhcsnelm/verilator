@@ -455,6 +455,7 @@ module t (/*AUTOARG*/
     if (CP_SCOPE_PARAM != 2) $write("");
     sel_idx <= cyc[3:0];
     queue_of_t.push_back(1);
+    if (q[$] != q[$ - 1]) $write("");  // AstQueueSel from the back
 
     $display("%g", $log10(r));
     $display("%g", $ln(r));
@@ -719,6 +720,20 @@ module t (/*AUTOARG*/
     if (vder.randomize() != 1) $stop;
   end
   escapes escapes();
+
+  class ProcessKiller;
+    function new(std::process victim);
+      kill_virtual(victim);
+    endfunction
+    virtual function void kill_virtual(std::process victim);
+      victim.kill();
+    endfunction
+  endclass
+
+  initial begin
+    ProcessKiller killer;
+    killer = new(process::self());
+  end
 endmodule
 
 module param_mod #(

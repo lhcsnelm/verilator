@@ -1697,6 +1697,10 @@ List Of Warnings
    as if the module's name were prefixed, although IEEE 1800-2023 23.8
    searches upward for scope names only.
 
+   Also warns when a DPI function returns a 4-state vector or a 2-state
+   vector wider than 32 bits, which IEEE 1800-2023 35.5.5 does not allow.
+   See :option:`import&32;"DPI-C"&32;function`.
+
    Ignoring this warning will only suppress the lint check; it will
    simulate correctly.
 
