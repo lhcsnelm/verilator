@@ -310,8 +310,8 @@ public:
             const bool on = &finfo == onp;
             AstNodeExpr* valuep;
             if (isBitwiseDType(varp)) {
-                AstNodeExpr* const maskp = makeRangeMaskConst(varp, varp->width(),
-                                                              range.m_rangeLsb, range.m_rangeMsb);
+                AstNodeExpr* const maskp
+                    = makeRangeMaskConst(varp, varp->width(), range.m_rangeLsb, range.m_rangeMsb);
                 AstNodeExpr* const oldp = new AstVarRef{flp, finfo.m_onVscp, VAccess::READ};
                 if (on) {
                     valuep = new AstOr{flp, oldp, maskp};
@@ -654,10 +654,10 @@ public:
             if (!forceVecVarp) {
                 AstCDType* const forceVecDtypep = new AstCDType{flp, "VlForceVec"};
                 v3Global.rootp()->typeTablep()->addTypesp(forceVecDtypep);
-                forceVecVarp = new AstVar{
-                    flp, VVarType::MEMBER,
-                    varp->name() + (m_doingAssign ? "_VassignVec" : "__VforceVec"),
-                    forceVecDtypep};
+                forceVecVarp
+                    = new AstVar{flp, VVarType::MEMBER,
+                                 varp->name() + (m_doingAssign ? "_VassignVec" : "__VforceVec"),
+                                 forceVecDtypep};
                 forceVecVarp->funcLocal(false);
                 forceVecVarp->isInternal(true);
                 varp->addNextHere(forceVecVarp);
@@ -822,13 +822,13 @@ public:
                 // until a release or a later force of its range
                 if (!finfo.m_isExternal && info.m_forceValVscp && !finfo.m_hasArraySel) {
                     const bool bitwise = isBitwiseDType(varp);
-                    AstVar* const onVarp = new AstVar{
-                        flp, VVarType::VAR,
-                        varp->name() + "__VforceOn" + std::to_string(finfo.m_forceId) + "__"
-                            + scopep->nameDotless(),
-                        bitwise ? varp->findBitDType(varp->width(), varp->width(),
-                                                     VSigning::UNSIGNED)
-                                : varp->findBitDType()};
+                    AstVar* const onVarp
+                        = new AstVar{flp, VVarType::VAR,
+                                     varp->name() + "__VforceOn" + std::to_string(finfo.m_forceId)
+                                         + "__" + scopep->nameDotless(),
+                                     bitwise ? varp->findBitDType(varp->width(), varp->width(),
+                                                                  VSigning::UNSIGNED)
+                                             : varp->findBitDType()};
                     varp->addNextHere(onVarp);
                     finfo.m_onVscp = new AstVarScope{flp, scopep, onVarp};
                     scopep->addVarsp(finfo.m_onVscp);
@@ -839,12 +839,12 @@ public:
                         = bitwise ? createValSyncStmt(info, finfo, rhsp, onRefp)
                                   : new AstIf{flp, onRefp, createValSyncStmt(info, finfo, rhsp)};
                     // Not combinational, as it also reads the bits it keeps
-                    AstSenItem* const sensp = new AstSenItem{
-                        flp, VEdgeType::ET_CHANGED,
-                        new AstVarRef{flp, finfo.m_rhsVarVscp, VAccess::READ}};
-                    sensp->addNext(new AstSenItem{
-                        flp, VEdgeType::ET_CHANGED,
-                        new AstVarRef{flp, finfo.m_onVscp, VAccess::READ}});
+                    AstSenItem* const sensp
+                        = new AstSenItem{flp, VEdgeType::ET_CHANGED,
+                                         new AstVarRef{flp, finfo.m_rhsVarVscp, VAccess::READ}};
+                    sensp->addNext(
+                        new AstSenItem{flp, VEdgeType::ET_CHANGED,
+                                       new AstVarRef{flp, finfo.m_onVscp, VAccess::READ}});
                     AstActive* const syncActivep
                         = new AstActive{flp, "force-val-update", new AstSenTree{flp, sensp}};
                     syncActivep->senTreeStorep(syncActivep->sentreep());
@@ -1298,10 +1298,10 @@ class ForceConvertVisitor final : public VNVisitor {
             AstNodeExpr* newEnp;
             if (bitwiseForcedVar) {
                 // forceEn = forceEn | mask(range);
-                newEnp = new AstOr{flp, new AstVarRef{flp, varInfop->m_forceEnVscp, VAccess::READ},
-                                   ForceState::makeRangeMaskConst(nodep, forcedVarp->width(),
-                                                                  info.m_rangeLsb,
-                                                                  info.m_rangeMsb)};
+                newEnp
+                    = new AstOr{flp, new AstVarRef{flp, varInfop->m_forceEnVscp, VAccess::READ},
+                                ForceState::makeRangeMaskConst(nodep, forcedVarp->width(),
+                                                               info.m_rangeLsb, info.m_rangeMsb)};
             } else {
                 newEnp = ForceState::makeRangeMaskConst(nodep, 1, 0, 0);
             }
