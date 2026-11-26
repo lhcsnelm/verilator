@@ -43,9 +43,8 @@ using util::newArgument;
 AstNodeExpr* newXInitialEdgep(SenExprBuilder& senExprBuilder, const AstSenItem* senItemp) {
     if (!v3Global.opt.xInitialEdge()) return nullptr;
     FileLine* const flp = senItemp->fileline();
-    const auto lsbp = [&]() {
-        return new AstSel{flp, senItemp->sensp()->cloneTreePure(false), 0, 1};
-    };
+    const auto lsbp
+        = [&]() { return new AstSel{flp, senItemp->sensp()->cloneTreePure(false), 0, 1}; };
     switch (senItemp->edgeType()) {
     case VEdgeType::ET_BOTHEDGE: return new AstConst{flp, AstConst::BitTrue{}};
     case VEdgeType::ET_POSEDGE: return senExprBuilder.guardExpr(lsbp());
