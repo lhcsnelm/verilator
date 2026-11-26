@@ -5764,6 +5764,7 @@ class LinkDotResolveVisitor final : public VNVisitor {
             // They may be visitted even if the current node can't be linked now.
             const bool thisRandWith = nodep->name() == "randomize" && nodep->withp()
                                       && VN_IS(m_modp, Class)
+                                      && !VN_IS(nodep->classOrPackagep(), Package)
                                       && (!m_ds.m_dotp || isDotThisReference(m_ds.m_dotp));
             VL_RESTORER_COPY(m_ds);
             VL_RESTORER(m_randSymp);
