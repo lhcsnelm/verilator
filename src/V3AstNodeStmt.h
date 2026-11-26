@@ -793,19 +793,16 @@ public:
     int instrCount() const override { return 0; }  // Rarely executes
     bool sameNode(const AstNode* samep) const override { return fileline() == samep->fileline(); }
 };
-class AstFinishFork final : public AstNodeStmt {
-    // $finish in fork
+class AstFinishReturn final : public AstNodeStmt {
+    // Return from the current function if $finish has executed, outside final blocks
 public:
-    explicit AstFinishFork(FileLine* fl)
-        : ASTGEN_SUPER_FinishFork(fl) {}
-    ASTGEN_MEMBERS_AstFinishFork;
+    explicit AstFinishReturn(FileLine* fl)
+        : ASTGEN_SUPER_FinishReturn(fl) {}
+    ASTGEN_MEMBERS_AstFinishReturn;
     bool isGateOptimizable() const override { return false; }
     bool isPredictOptimizable() const override { return false; }
-    bool isPure() override { return false; }  // SPECIAL: $display has 'visual' ordering
-    bool isOutputter() override { return true; }  // SPECIAL: $display makes output
-    bool isUnlikely() const override { return true; }
-    int instrCount() const override { return 0; }  // Rarely executes
-    bool sameNode(const AstNode* samep) const override { return fileline() == samep->fileline(); }
+    bool isPure() override { return false; }
+    bool sameNode(const AstNode* /*samep*/) const override { return true; }
 };
 class AstFireEvent final : public AstNodeStmt {
     // '-> _' and '->> _' event trigger statements

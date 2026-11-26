@@ -2871,11 +2871,110 @@ std::string V3Task::assignDpiToInternal(const std::string& lhsName, AstVar* varp
     return statements;
 }
 
+//######################################################################
+// Return from functions once $finish has executed, so no statement after it runs
+
+class TaskFinishVisitor final : public VNVisitor {
+    // NODE STATE
+    //  AstCFunc::user1()       -> bool. May execute $finish
+    //  AstNodeStmt::user1()    -> bool. Return added after it
+    const VNUser1InUse m_inuser1;
+
+    // STATE
+    AstClass* m_classp = nullptr;  // Current class
+    AstCFunc* m_cfuncp = nullptr;  // Current function
+    bool m_inBody = false;  // In a function or procedure
+    bool m_inExprStmt = false;  // In statements of an expression, emitted as a lambda
+    AstNodeStmt* m_stmtp = nullptr;  // Current statement that can be followed by a return
+    std::vector<std::pair<AstNodeStmt*, AstCFunc*>> m_calls;  // Calling statement, callee
+    std::vector<AstNodeStmt*> m_finishps;  // $finish statements
+    std::unordered_map<const AstCFunc*, std::vector<AstCFunc*>> m_callers;  // Callee -> callers
+    // Methods by name, as a call may dispatch to any override
+    std::unordered_map<std::string, std::vector<AstCFunc*>> m_methods;
+    std::vector<AstCFunc*> m_workList;  // Functions newly marked as may $finish
+
+    void markFinishing(AstCFunc* funcp) {
+        if (funcp && !funcp->user1SetOnce()) m_workList.push_back(funcp);
+    }
+    static void addReturnAfter(AstNodeStmt* stmtp) {
+        if (!stmtp->user1SetOnce()) stmtp->addNextHere(new AstFinishReturn{stmtp->fileline()});
+    }
+
+    // VISITORS
+    void visit(AstClass* nodep) override {
+        VL_RESTORER(m_classp);
+        m_classp = nodep;
+        iterateChildren(nodep);
+    }
+    void visit(AstCFunc* nodep) override {
+        VL_RESTORER(m_cfuncp);
+        VL_RESTORER(m_inBody);
+        m_cfuncp = nodep;
+        m_inBody = true;
+        if (m_classp) m_methods[nodep->name()].push_back(nodep);
+        iterateChildren(nodep);
+    }
+    void visit(AstNodeProcedure* nodep) override {
+        VL_RESTORER(m_cfuncp);
+        VL_RESTORER(m_inBody);
+        m_cfuncp = nullptr;
+        m_inBody = true;
+        iterateChildren(nodep);
+    }
+    void visit(AstFinish* nodep) override {
+        markFinishing(m_cfuncp);
+        m_finishps.push_back(m_inExprStmt ? m_stmtp : nodep);
+    }
+    void visit(AstExprStmt* nodep) override {
+        VL_RESTORER(m_inExprStmt);
+        m_inExprStmt = true;
+        iterateChildren(nodep);
+    }
+    void visit(AstWith* nodep) override {
+        VL_RESTORER(m_inExprStmt);
+        m_inExprStmt = true;
+        iterateChildren(nodep);
+    }
+    void visit(AstNodeStmt* nodep) override {
+        VL_RESTORER(m_stmtp);
+        if (m_inBody && !m_inExprStmt) m_stmtp = nodep;
+        iterateChildren(nodep);
+    }
+    void visit(AstNodeCCall* nodep) override {
+        if (m_stmtp) m_calls.emplace_back(m_stmtp, nodep->funcp());
+        if (m_cfuncp) m_callers[nodep->funcp()].push_back(m_cfuncp);
+        iterateChildren(nodep);
+    }
+    void visit(AstVar*) override {}  // Accelerate
+    void visit(AstNode* nodep) override { iterateChildren(nodep); }
+
+public:
+    // CONSTRUCTORS
+    explicit TaskFinishVisitor(AstNetlist* nodep) {
+        iterate(nodep);
+        while (!m_workList.empty()) {
+            const AstCFunc* const funcp = m_workList.back();
+            m_workList.pop_back();
+            for (AstCFunc* const callerp : m_callers[funcp]) markFinishing(callerp);
+            const auto it = m_methods.find(funcp->name());
+            if (it != m_methods.end()) {
+                for (AstCFunc* const methodp : it->second) markFinishing(methodp);
+            }
+        }
+        for (const auto& pair : m_calls) {
+            if (pair.second->user1()) addReturnAfter(pair.first);
+        }
+        for (AstNodeStmt* const stmtp : m_finishps) addReturnAfter(stmtp);
+    }
+    ~TaskFinishVisitor() override = default;
+};
+
 void V3Task::taskAll(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ":");
     {
         TaskStateVisitor visitors{nodep};
         const TaskVisitor visitor{nodep, &visitors};
-    }  // Destruct before checking
+    }
+    { TaskFinishVisitor{nodep}; }  // Destruct before checking
     V3Global::dumpCheckGlobalTree("task", 0, dumpTreeEitherLevel() >= 3);
 }

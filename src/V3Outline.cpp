@@ -276,7 +276,7 @@ class OutlineVisitor final : public VNVisitor {
     void visit(AstJumpGo* nodep) override { analyze(nodep, m_info(nodep->blockp()).m_depth); }
     void visit(AstLoopTest* nodep) override { analyze(nodep, m_info(nodep->loopp()).m_depth); }
     // Returns from the coroutine, so no statement containing it can move
-    void visit(AstFinishFork* nodep) override { analyze(nodep, 0); }
+    void visit(AstFinishReturn* nodep) override { analyze(nodep, 0); }
     void visit(AstNode* nodep) override {
         ++m_count;
         iterateChildren(nodep);

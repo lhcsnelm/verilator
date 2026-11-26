@@ -1509,18 +1509,15 @@ public:
         puts(cvtToStr(nodep->fileline()->lineno()));
         puts(", \"\");\n");
     }
-    void visit(AstFinishFork* nodep) override {
-        // Disable all the forks so they don't operate after simulation is finished.
-        if (m_cfuncp && m_cfuncp->needsVlProcess()) putns(nodep, "vlProcess->disableFork();\n");
-        putns(nodep, "VL_FINISH_MT(");
-        putsQuoted(protect(nodep->fileline()->filename()));
-        puts(", ");
-        puts(cvtToStr(nodep->fileline()->lineno()));
-        puts(", \"\");\n");
+    void visit(AstFinishReturn* nodep) override {
+        putns(nodep, "if (VL_UNLIKELY(vlSymsp->_vm_contextp__->gotFinish()"
+                     " && !vlSymsp->_vm_contextp__->executingFinal())) ");
         if (m_cfuncp->isCoroutine()) {
-            putns(nodep, "co_return;\n");
+            puts("co_return;\n");
+        } else if (m_cfuncp->rtnTypeVoid() == "void") {
+            puts("return;\n");
         } else {
-            putns(nodep, "return;\n");
+            puts("return {};\n");
         }
     }
     void visit(AstPrintTimeScale* nodep) override {
