@@ -2661,7 +2661,10 @@ Summary:
    While it is not good practice, some designs rely on X->0 triggering a
    negedge, particularly in reset sequences. Using
    :vlopt:`--x-initial-edge` will replicate this behavior. It will also
-   ensure that X->1 triggers a posedge.
+   ensure that X->1 triggers a posedge. At initialization, each edge
+   event fires for the value the signal starts with: a negedge for zero,
+   a posedge for one. A value-change event such as ``@(sig)`` does not
+   fire, as the signal is still X until it is first written.
 
    .. note::
 

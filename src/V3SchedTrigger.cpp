@@ -37,6 +37,23 @@ namespace {
 
 using util::newArgument;
 
+// With --x-initial-edge, the value at initialization fires the edge a 4-state simulator sees
+// from the initial X: posedge if the value is 1, negedge if 0. A change trigger is not fired,
+// as the value is still X until first written. Returns nullptr for no initial trigger.
+AstNodeExpr* newXInitialEdgep(SenExprBuilder& senExprBuilder, const AstSenItem* senItemp) {
+    if (!v3Global.opt.xInitialEdge()) return nullptr;
+    FileLine* const flp = senItemp->fileline();
+    const auto lsbp = [&]() {
+        return new AstSel{flp, senItemp->sensp()->cloneTreePure(false), 0, 1};
+    };
+    switch (senItemp->edgeType()) {
+    case VEdgeType::ET_BOTHEDGE: return new AstConst{flp, AstConst::BitTrue{}};
+    case VEdgeType::ET_POSEDGE: return senExprBuilder.guardExpr(lsbp());
+    case VEdgeType::ET_NEGEDGE: return senExprBuilder.guardExpr(new AstNot{flp, lsbp()});
+    default: return nullptr;
+    }
+}
+
 AstVarScope* newLocal(AstCFunc* funcp, AstNodeDType* dtypep, const std::string& name) {
     FileLine* const flp = funcp->fileline();
     AstScope* const scopep = funcp->scopep();
@@ -694,13 +711,14 @@ TriggerKit TriggerKit::create(AstNetlist* netlistp,  //
         trigps.emplace_back(pair.first);
 
         // Add initialization time trigger
-        if (pair.second || v3Global.opt.xInitialEdge()) {
+        AstNodeExpr* const initTrigp = pair.second ? new AstConst{flp, AstConst::BitTrue{}}
+                                                   : newXInitialEdgep(senExprBuilder, senItemp);
+        if (initTrigp) {
             const int wrdIndex = static_cast<int>(i / WORD_SIZE);
             const int bitIndex = static_cast<int>(i % WORD_SIZE);
             AstNodeExpr* const wordp = new AstArraySel{flp, wr(kit.m_vscp), wrdIndex};
             AstNodeExpr* const lhsp = new AstSel{flp, wordp, bitIndex, 1};
-            AstNodeExpr* const rhsp = new AstConst{flp, AstConst::BitTrue{}};
-            initialTrigsp = AstNode::addNext(initialTrigsp, new AstAssign{flp, lhsp, rhsp});
+            initialTrigsp = AstNode::addNext(initialTrigsp, new AstAssign{flp, lhsp, initTrigp});
         }
 
         // Add a debug statement for this trigger
