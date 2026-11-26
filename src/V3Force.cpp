@@ -58,6 +58,7 @@ public:
         bool m_isExternal = false;  // Synthetic force for the public force controls
         bool m_skipRdRefresh = false;  // finalizeRhsVars's force-rd-update block refreshes forceRd
         AstVarScope* m_rhsVarVscp = nullptr;  // Scope of the var containing RHSID
+        AstVarScope* m_onVscp = nullptr;  // Bits of __VforceVal this force drives
         AstNodeExpr* m_rhsExprp = nullptr;  // Expression on RHS of this force assignment
 
         ForceInfo() = default;
@@ -272,6 +273,59 @@ public:
         if (!isOpaquePathSelector(nodep)) return false;
         const AstNode* const backp = nodep->backp();
         return !backp || !isOpaquePathSelector(backp);
+    }
+
+    // forceVal = rhs in the bits of 'maskp', by default the range of the force
+    static AstNodeStmt* createValSyncStmt(const VarForceInfo& varInfo, const ForceInfo& info,
+                                          AstNodeExpr* rhsp, AstNodeExpr* maskp = nullptr) {
+        FileLine* const flp = rhsp->fileline();
+        AstVar* const varp = varInfo.m_varp;
+        AstVarRef* const valWritep = new AstVarRef{flp, varInfo.m_forceValVscp, VAccess::WRITE};
+        if (!isBitwiseDType(varp)) {
+            return new AstAssign{flp, valWritep, castToNodeDType(rhsp, varp)};
+        }
+        if (!maskp) {
+            maskp = makeRangeMaskConst(varp, varp->width(), info.m_rangeLsb, info.m_rangeMsb);
+        }
+        AstNodeExpr* const paddedp
+            = zeroPadToBaseWidth(rhsp, varp->width(), info.m_padLsb, info.m_padMsb);
+        AstNodeExpr* const keptp
+            = new AstAnd{flp, new AstVarRef{flp, varInfo.m_forceValVscp, VAccess::READ},
+                         new AstNot{flp, maskp->cloneTreePure(false)}};
+        return new AstAssign{flp, valWritep,
+                             new AstOr{flp, keptp, new AstAnd{flp, paddedp, maskp}}};
+    }
+
+    // Give the bits of a range of a variable to force 'onp', or to no force
+    static AstNodeStmt* createOnUpdateStmts(const VarForceInfo& varInfo, FileLine* flp,
+                                            const ForceRange& range, const ForceInfo* onp) {
+        AstVar* const varp = varInfo.m_varp;
+        AstNodeStmt* stmtsp = nullptr;
+        for (const auto& pair : varInfo.m_forces) {
+            const ForceInfo& finfo = pair.second;
+            if (!finfo.m_onVscp || finfo.m_rangeMsb < range.m_rangeLsb
+                || range.m_rangeMsb < finfo.m_rangeLsb) {
+                continue;
+            }
+            const bool on = &finfo == onp;
+            AstNodeExpr* valuep;
+            if (isBitwiseDType(varp)) {
+                AstNodeExpr* const maskp = makeRangeMaskConst(varp, varp->width(),
+                                                              range.m_rangeLsb, range.m_rangeMsb);
+                AstNodeExpr* const oldp = new AstVarRef{flp, finfo.m_onVscp, VAccess::READ};
+                if (on) {
+                    valuep = new AstOr{flp, oldp, maskp};
+                } else {
+                    valuep = new AstAnd{flp, oldp, new AstNot{flp, maskp}};
+                }
+            } else {
+                valuep = new AstConst{flp, AstConst::BitTrue{}, on};
+            }
+            stmtsp = AstNode::addNext(
+                stmtsp,
+                new AstAssign{flp, new AstVarRef{flp, finfo.m_onVscp, VAccess::WRITE}, valuep});
+        }
+        return stmtsp;
     }
 
     static AstVarRef* getOneVarRef(AstNodeExpr* forceStmtp) {
@@ -764,6 +818,40 @@ public:
                     rhsAssignp->addNextHere(touchStmtp);
                 }
 
+                // A force in code sets the public force value, which then follows its RHS
+                // until a release or a later force of its range
+                if (!finfo.m_isExternal && info.m_forceValVscp && !finfo.m_hasArraySel) {
+                    const bool bitwise = isBitwiseDType(varp);
+                    AstVar* const onVarp = new AstVar{
+                        flp, VVarType::VAR,
+                        varp->name() + "__VforceOn" + std::to_string(finfo.m_forceId) + "__"
+                            + scopep->nameDotless(),
+                        bitwise ? varp->findBitDType(varp->width(), varp->width(),
+                                                     VSigning::UNSIGNED)
+                                : varp->findBitDType()};
+                    varp->addNextHere(onVarp);
+                    finfo.m_onVscp = new AstVarScope{flp, scopep, onVarp};
+                    scopep->addVarsp(finfo.m_onVscp);
+                    AstNodeExpr* const rhsp
+                        = new AstVarRef{flp, finfo.m_rhsVarVscp, VAccess::READ};
+                    AstVarRef* const onRefp = new AstVarRef{flp, finfo.m_onVscp, VAccess::READ};
+                    AstNodeStmt* const syncp
+                        = bitwise ? createValSyncStmt(info, finfo, rhsp, onRefp)
+                                  : new AstIf{flp, onRefp, createValSyncStmt(info, finfo, rhsp)};
+                    // Not combinational, as it also reads the bits it keeps
+                    AstSenItem* const sensp = new AstSenItem{
+                        flp, VEdgeType::ET_CHANGED,
+                        new AstVarRef{flp, finfo.m_rhsVarVscp, VAccess::READ}};
+                    sensp->addNext(new AstSenItem{
+                        flp, VEdgeType::ET_CHANGED,
+                        new AstVarRef{flp, finfo.m_onVscp, VAccess::READ}});
+                    AstActive* const syncActivep
+                        = new AstActive{flp, "force-val-update", new AstSenTree{flp, sensp}};
+                    syncActivep->senTreeStorep(syncActivep->sentreep());
+                    syncActivep->addProcsp(new AstAlways{flp, VAlwaysKwd::ALWAYS, nullptr, syncp});
+                    scopep->addBlocksp(syncActivep);
+                }
+
                 // Run both updates in a combinational always block.
                 AstAlways* const alwaysp
                     = new AstAlways{flp, VAlwaysKwd::ALWAYS, nullptr, rhsAssignp};
@@ -1195,50 +1283,31 @@ class ForceConvertVisitor final : public VNVisitor {
             = new AstAssign{flp, new AstVarRef{flp, info.m_rhsVarVscp, VAccess::WRITE},
                             nodep->rhsp()->cloneTreePure(false)};
 
-        AstAssign* valAssignp = nullptr;
-        AstAssign* enAssignp = nullptr;
+        AstNodeStmt* valAssignp = nullptr;
+        AstNodeStmt* enAssignp = nullptr;
         const bool bitwiseForcedVar = ForceState::isBitwiseDType(forcedVarp);
         // When an externally forceable signal is also forced in (System)Verilog code
         // keep the public __VforceEn/__VforceVal signals in sync with the procedural force too.
         // Don't do this for array selections; those are represented only in VlForceVec.
         if (!nodep->user2() && varInfop->m_forceEnVscp && varInfop->m_forceValVscp
             && !info.m_hasArraySel) {
-            AstNodeExpr* baseExprp = nodep->rhsp()->cloneTreePure(false);
+            AstNodeExpr* const baseExprp = nodep->rhsp()->cloneTreePure(false);
             baseExprp->foreach(
                 [](AstVarRef* const refp) { ForceState::markNonReplaceable(refp); });
+            valAssignp = ForceState::createValSyncStmt(*varInfop, info, baseExprp);
+            AstNodeExpr* newEnp;
             if (bitwiseForcedVar) {
-                baseExprp = ForceState::zeroPadToBaseWidth(baseExprp, forcedVarp->width(),
-                                                           info.m_padLsb, info.m_padMsb);
-            }
-            if (bitwiseForcedVar) {
-                // forceVal = (forceVal & ~mask(range)) | (rhs_padded & mask(range));
-                // forceEn  = forceEn | mask(range);
-                AstConst* const maskConstp = ForceState::makeRangeMaskConst(
-                    nodep, forcedVarp->width(), info.m_rangeLsb, info.m_rangeMsb);
-                AstNodeExpr* const valReadp
-                    = new AstVarRef{flp, varInfop->m_forceValVscp, VAccess::READ};
-                AstNodeExpr* const valWritep
-                    = new AstVarRef{flp, varInfop->m_forceValVscp, VAccess::WRITE};
-                AstNodeExpr* const notMaskp = new AstNot{flp, maskConstp};
-                AstNodeExpr* const maskedOldp = new AstAnd{flp, valReadp, notMaskp};
-                AstNodeExpr* const newValp = new AstOr{flp, maskedOldp, baseExprp};
-                valAssignp = new AstAssign{flp, valWritep, newValp};
-
-                AstNodeExpr* const enReadp
-                    = new AstVarRef{flp, varInfop->m_forceEnVscp, VAccess::READ};
-                AstNodeExpr* const enWritep
-                    = new AstVarRef{flp, varInfop->m_forceEnVscp, VAccess::WRITE};
-                AstNodeExpr* const newEnp
-                    = new AstOr{flp, enReadp, maskConstp->cloneTreePure(false)};
-                enAssignp = new AstAssign{flp, enWritep, newEnp};
+                // forceEn = forceEn | mask(range);
+                newEnp = new AstOr{flp, new AstVarRef{flp, varInfop->m_forceEnVscp, VAccess::READ},
+                                   ForceState::makeRangeMaskConst(nodep, forcedVarp->width(),
+                                                                  info.m_rangeLsb,
+                                                                  info.m_rangeMsb)};
             } else {
-                AstConst* const oneConstp = ForceState::makeRangeMaskConst(nodep, 1, 0, 0);
-                AstNodeExpr* const rhsValp = ForceState::castToNodeDType(baseExprp, forcedVarp);
-                valAssignp = new AstAssign{
-                    flp, new AstVarRef{flp, varInfop->m_forceValVscp, VAccess::WRITE}, rhsValp};
-                enAssignp = new AstAssign{
-                    flp, new AstVarRef{flp, varInfop->m_forceEnVscp, VAccess::WRITE}, oneConstp};
+                newEnp = ForceState::makeRangeMaskConst(nodep, 1, 0, 0);
             }
+            enAssignp = new AstAssign{
+                flp, new AstVarRef{flp, varInfop->m_forceEnVscp, VAccess::WRITE}, newEnp};
+            enAssignp->addNext(ForceState::createOnUpdateStmts(*varInfop, flp, info, &info));
         }
 
         // Verilog pseudocode:
@@ -1356,6 +1425,10 @@ class ForceConvertVisitor final : public VNVisitor {
         if (clearEnp) {
             clearEnp->addNextHere(stmtListp);
             stmtListp = clearEnp;
+        }
+        if (AstNodeStmt* const offp
+            = ForceState::createOnUpdateStmts(*varInfop, flp, rangeInfo, nullptr)) {
+            stmtListp = AstNode::addNext<AstNode, AstNode>(offp, stmtListp);
         }
 
         // IEEE 1800-2023 10.6.2: When released, if the variable is not continuously driven,
