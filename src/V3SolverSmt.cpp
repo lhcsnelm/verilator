@@ -4250,8 +4250,8 @@ class SolverSmtLowering final : public V3SolverLowering {
             dtypep->dtypep(dtypep);
             v3Global.rootp()->typeTablep()->addTypesp(dtypep);
             inner.m_arrp = arrVarp;
-            inner.m_sizesp = newMemberVarp(classp, "__V" + arrVarp->name() + "_inner_size",
-                                           dtypep);
+            inner.m_sizesp
+                = newMemberVarp(classp, "__V" + arrVarp->name() + "_inner_size", dtypep);
             inner.m_resizedp = newMemberVarp(classp, "__V" + arrVarp->name() + "_resized",
                                              nodep->findBitDType());
             m_innerSizedArrays[classp].push_back(inner);
@@ -4265,8 +4265,8 @@ class SolverSmtLowering final : public V3SolverLowering {
         AstCMethodHard* const currentp = nodep->cloneTree(false);
         currentp->user1(false);
         currentp->fromp()->user1(false);
-        AstCond* const sizep = new AstCond{
-            fl, newMemberRefp(fl, inner.m_resizedp, VAccess::READ), currentp, solvedp};
+        AstCond* const sizep = new AstCond{fl, newMemberRefp(fl, inner.m_resizedp, VAccess::READ),
+                                           currentp, solvedp};
         sizep->user1(true);
         nodep->replaceWith(sizep);
         VL_DO_DANGLING(nodep->deleteTree(), nodep);
@@ -4290,8 +4290,7 @@ class SolverSmtLowering final : public V3SolverLowering {
         return varp;
     }
     // Reference to a class member, through its declaring class so V3Scope resolves it
-    static AstVarRef* newMemberRefp(FileLine* const fl, AstVar* const varp,
-                                    const VAccess access) {
+    static AstVarRef* newMemberRefp(FileLine* const fl, AstVar* const varp, const VAccess access) {
         AstNodeModule* const classp = VN_AS(varp->user2p(), NodeModule);
         AstVarRef* const refp = new AstVarRef{fl, classp, varp, access};
         refp->classOrPackagep(classp);
@@ -4331,14 +4330,14 @@ class SolverSmtLowering final : public V3SolverLowering {
                                           new AstVarRef{fl, indexVarp, VAccess::READ}};
             };
             // A negative solved size leaves the element empty
-            AstNodeExpr* const sizep = new AstCond{
-                fl, new AstLtS{fl, newSizep(), new AstConst{fl, 0}}, new AstConst{fl, 0},
-                newSizep()};
+            AstNodeExpr* const sizep
+                = new AstCond{fl, new AstLtS{fl, newSizep(), new AstConst{fl, 0}},
+                              new AstConst{fl, 0}, newSizep()};
             AstNodeExpr* const elemp
                 = VN_IS(inner.m_arrp->dtypep()->skipRefp(), QueueDType)
-                      ? static_cast<AstNodeExpr*>(new AstQueueSel{
-                          fl, newMemberRefp(fl, inner.m_arrp, VAccess::WRITE),
-                          new AstVarRef{fl, indexVarp, VAccess::READ}})
+                      ? static_cast<AstNodeExpr*>(
+                            new AstQueueSel{fl, newMemberRefp(fl, inner.m_arrp, VAccess::WRITE),
+                                            new AstVarRef{fl, indexVarp, VAccess::READ}})
                       : new AstDynArraySel{fl, newMemberRefp(fl, inner.m_arrp, VAccess::WRITE),
                                            new AstVarRef{fl, indexVarp, VAccess::READ}};
             AstCMethodHard* const resizep
@@ -4346,8 +4345,7 @@ class SolverSmtLowering final : public V3SolverLowering {
             resizep->dtypeSetVoid();
             AstForeachHeader* const headerp = new AstForeachHeader{
                 fl, newMemberRefp(fl, inner.m_arrp, VAccess::READ), indexVarp};
-            stmtsp = AstNode::addNext(
-                stmtsp, new AstForeach{fl, headerp, resizep->makeStmt()});
+            stmtsp = AstNode::addNext(stmtsp, new AstForeach{fl, headerp, resizep->makeStmt()});
         }
         return stmtsp;
     }
@@ -4528,8 +4526,7 @@ public:
             AstTaskRef* const setupTaskRefp = new AstTaskRef{fl, setupAllTaskp};
             randomizep->addStmtsp(setupTaskRefp->makeStmt());
 
-            const std::vector<InnerSized> innerSized
-                = collectInnerSizedArrays(nodep);
+            const std::vector<InnerSized> innerSized = collectInnerSizedArrays(nodep);
             if (!sizeArrayVars.empty() || !innerSized.empty()) {
                 AstVar* const sizeOkVarp
                     = addSizeSolvep(randomizep, genp, randModeVarp, sizeArrayVars);
@@ -4555,9 +4552,9 @@ public:
                     AstVar* const innerOkVarp = newOkVarp(randomizep, "__Vinner_ok");
                     randomizep->addStmtsp(new AstAssign{
                         fl, new AstVarRef{fl, innerOkVarp, VAccess::WRITE}, beginValp});
-                    randomizep->addStmtsp(
-                        new AstIf{fl, new AstVarRef{fl, innerOkVarp, VAccess::READ},
-                                  newElementResizesp(fl, innerSized)});
+                    randomizep->addStmtsp(new AstIf{fl,
+                                                    new AstVarRef{fl, innerOkVarp, VAccess::READ},
+                                                    newElementResizesp(fl, innerSized)});
                     for (const InnerSized& inner : innerSized) {
                         addArrayElemRefresh(fl, inner.m_arrp, randomizep, genp);
                         addArrayElemRefresh(fl, inner.m_sizesp, randomizep, genp);
@@ -4565,9 +4562,8 @@ public:
                     }
                     addConstraintRebuild(randomizep, genp, genp, sizeArrayVars,
                                          (new AstTaskRef{fl, setupAllTaskp})->makeStmt());
-                    beginValp
-                        = new AstAnd{fl, new AstVarRef{fl, innerOkVarp, VAccess::READ},
-                                     newSolveOkp(randomizep, genp, "__Vinner_final_ok")};
+                    beginValp = new AstAnd{fl, new AstVarRef{fl, innerOkVarp, VAccess::READ},
+                                           newSolveOkp(randomizep, genp, "__Vinner_final_ok")};
                     for (const InnerSized& inner : innerSized) {
                         randomizep->addStmtsp(newSetResizedp(fl, inner, false));
                     }
