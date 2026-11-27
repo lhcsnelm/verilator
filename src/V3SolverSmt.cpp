@@ -3182,6 +3182,14 @@ class SolverSmtLowering final : public V3SolverLowering {
     int m_distNum = 0;  // Dist bucket variable counter within a class for var naming
     std::set<std::string> m_writtenVars;  // Track write_var calls per class to avoid duplicates
     std::map<AstClass*, VInsertionSet<AstVar*>> m_sizeConstrainedArrays;  // Per-class arrays
+    // An array whose elements' sizes constraints name
+    struct InnerSized final {
+        AstVar* m_arrp;  // The array
+        AstVar* m_sizesp;  // Its elements' sizes, solved after its own size
+        AstVar* m_resizedp;  // Whether its elements have the solved sizes, read instead then
+    };
+    std::map<AstClass*, std::vector<InnerSized>> m_innerSizedArrays;  // Per class constraining
+    std::unordered_map<const AstVar*, InnerSized> m_innerSizeVars;  // Per array
     uint32_t m_uniqueConstraintId = 0;  // current ID of unique call
 
     // METHODS
@@ -4154,6 +4162,22 @@ class SolverSmtLowering final : public V3SolverLowering {
         }
     }
 
+    static AstVar* newOkVarp(AstFunc* const randomizep, const char* const name) {
+        AstVar* const varp = new AstVar{randomizep->fileline(), VVarType::BLOCKTEMP, name,
+                                        randomizep->findBasicDType(VBasicDTypeKwd::BIT)};
+        varp->funcLocal(true);
+        randomizep->addDeclsp(varp);
+        return varp;
+    }
+    // Solve into a new variable, which is returned read
+    static AstNodeExpr* newSolveOkp(AstFunc* const randomizep, AstVar* const genp,
+                                    const char* const name) {
+        FileLine* const fl = randomizep->fileline();
+        AstVar* const okVarp = newOkVarp(randomizep, name);
+        randomizep->addStmtsp(
+            new AstAssign{fl, new AstVarRef{fl, okVarp, VAccess::WRITE}, newSolverCallp(genp)});
+        return new AstVarRef{fl, okVarp, VAccess::READ};
+    }
     static AstCExpr* newSolverCallp(AstVar* const genp) {
         AstCExpr* const callp = new AstCExpr{genp->fileline()};
         callp->dtypeSetBit();
@@ -4196,6 +4220,126 @@ class SolverSmtLowering final : public V3SolverLowering {
         }
     }
 
+    // Replace '.size()' of an element of a constrained dynamic array or queue with an element
+    // of a variable holding the sizes of the array's elements, solved once the array is sized
+    void lowerInnerSize(AstClass* const classp, AstCMethodHard* const nodep) {
+        AstNodeSel* const selp = VN_CAST(nodep->fromp(), NodeSel);
+        const AstQueueSel* const queueSelp = VN_CAST(selp, QueueSel);
+        if (nodep->method() != VCMethod::DYN_SIZE || !selp
+            || !(VN_IS(selp, DynArraySel) || (queueSelp && !queueSelp->fromBack())))
+            return;
+        AstVarRef* const arrRefp = VN_CAST(selp->fromp(), VarRef);
+        if (!arrRefp) return;
+        FileLine* const fl = nodep->fileline();
+        AstVar* const arrVarp = arrRefp->varp();
+        InnerSized& inner = m_innerSizeVars[arrVarp];
+        if (!inner.m_arrp) {
+            AstDynArrayDType* const dtypep = new AstDynArrayDType{fl, nodep->findIntDType()};
+            dtypep->dtypep(dtypep);
+            v3Global.rootp()->typeTablep()->addTypesp(dtypep);
+            inner.m_arrp = arrVarp;
+            inner.m_sizesp = newMemberVarp(classp, "__V" + arrVarp->name() + "_inner_size",
+                                           dtypep);
+            inner.m_resizedp = newMemberVarp(classp, "__V" + arrVarp->name() + "_resized",
+                                             nodep->findBitDType());
+            m_innerSizedArrays[classp].push_back(inner);
+        }
+        AstVarRef* const sizesRefp = newMemberRefp(fl, inner.m_sizesp, VAccess::READ);
+        sizesRefp->user1(true);
+        AstDynArraySel* const solvedp
+            = new AstDynArraySel{fl, sizesRefp, selp->bitp()->cloneTree(false)};
+        solvedp->user1(true);
+        // The current size, a state value, so not lowered here again
+        AstCMethodHard* const currentp = nodep->cloneTree(false);
+        currentp->user1(false);
+        currentp->fromp()->user1(false);
+        AstCond* const sizep = new AstCond{
+            fl, newMemberRefp(fl, inner.m_resizedp, VAccess::READ), currentp, solvedp};
+        sizep->user1(true);
+        nodep->replaceWith(sizep);
+        VL_DO_DANGLING(nodep->deleteTree(), nodep);
+    }
+    std::vector<InnerSized> collectInnerSizedArrays(AstClass* classp) const {
+        std::vector<InnerSized> arrays;
+        for (; classp; classp = classp->extendsp() ? classp->extendsp()->classp() : nullptr) {
+            const auto it = m_innerSizedArrays.find(classp);
+            if (it != m_innerSizedArrays.end()) {
+                arrays.insert(arrays.end(), it->second.begin(), it->second.end());
+            }
+        }
+        return arrays;
+    }
+    AstVar* newMemberVarp(AstClass* const classp, const std::string& name,
+                          AstNodeDType* const dtypep) {
+        AstVar* const varp = new AstVar{classp->fileline(), VVarType::MEMBER, name, dtypep};
+        classp->addMembersp(varp);
+        m_memberMap.insert(classp, varp);
+        varp->user2p(classp);
+        return varp;
+    }
+    // Reference to a class member, through its declaring class so V3Scope resolves it
+    static AstVarRef* newMemberRefp(FileLine* const fl, AstVar* const varp,
+                                    const VAccess access) {
+        AstNodeModule* const classp = VN_AS(varp->user2p(), NodeModule);
+        AstVarRef* const refp = new AstVarRef{fl, classp, varp, access};
+        refp->classOrPackagep(classp);
+        return refp;
+    }
+    // Size each array's element list of inner sizes to the array
+    static AstNodeStmt* newInnerSizesResizesp(FileLine* const fl,
+                                              const std::vector<InnerSized>& arrays) {
+        AstNodeStmt* stmtsp = nullptr;
+        for (const InnerSized& inner : arrays) {
+            AstCMethodHard* const sizep = new AstCMethodHard{
+                fl, newMemberRefp(fl, inner.m_arrp, VAccess::READ), VCMethod::DYN_SIZE};
+            sizep->dtypeSetInt();
+            AstCMethodHard* const resizep
+                = new AstCMethodHard{fl, newMemberRefp(fl, inner.m_sizesp, VAccess::WRITE),
+                                     VCMethod::DYN_RESIZE, sizep};
+            resizep->dtypeSetVoid();
+            stmtsp = AstNode::addNext(stmtsp, resizep->makeStmt());
+        }
+        return stmtsp;
+    }
+    static AstNodeStmt* newSetResizedp(FileLine* const fl, const InnerSized& inner,
+                                       const bool resized) {
+        return new AstAssign{fl, newMemberRefp(fl, inner.m_resizedp, VAccess::WRITE),
+                             new AstConst{fl, AstConst::BitTrue{}, resized}};
+    }
+    // Resize each element of each array to its solved size
+    static AstNodeStmt* newElementResizesp(FileLine* const fl,
+                                           const std::vector<InnerSized>& arrays) {
+        AstNodeStmt* stmtsp = nullptr;
+        for (const InnerSized& inner : arrays) {
+            AstVar* const indexVarp
+                = new AstVar{fl, VVarType::BLOCKTEMP, "__V" + inner.m_arrp->name() + "_index",
+                             inner.m_sizesp->findIntDType()};
+            const auto newSizep = [&]() {
+                return new AstDynArraySel{fl, newMemberRefp(fl, inner.m_sizesp, VAccess::READ),
+                                          new AstVarRef{fl, indexVarp, VAccess::READ}};
+            };
+            // A negative solved size leaves the element empty
+            AstNodeExpr* const sizep = new AstCond{
+                fl, new AstLtS{fl, newSizep(), new AstConst{fl, 0}}, new AstConst{fl, 0},
+                newSizep()};
+            AstNodeExpr* const elemp
+                = VN_IS(inner.m_arrp->dtypep()->skipRefp(), QueueDType)
+                      ? static_cast<AstNodeExpr*>(new AstQueueSel{
+                          fl, newMemberRefp(fl, inner.m_arrp, VAccess::WRITE),
+                          new AstVarRef{fl, indexVarp, VAccess::READ}})
+                      : new AstDynArraySel{fl, newMemberRefp(fl, inner.m_arrp, VAccess::WRITE),
+                                           new AstVarRef{fl, indexVarp, VAccess::READ}};
+            AstCMethodHard* const resizep
+                = new AstCMethodHard{fl, elemp, VCMethod::DYN_RESIZE, sizep};
+            resizep->dtypeSetVoid();
+            AstForeachHeader* const headerp = new AstForeachHeader{
+                fl, newMemberRefp(fl, inner.m_arrp, VAccess::READ), indexVarp};
+            stmtsp = AstNode::addNext(
+                stmtsp, new AstForeach{fl, headerp, resizep->makeStmt()});
+        }
+        return stmtsp;
+    }
+
 public:
     // CONSTRUCTORS
     SolverSmtLowering(VMemberMap& memberMap, V3UniqueNames& uniqueNames,
@@ -4218,7 +4362,8 @@ public:
             AstClass* const classp = VN_AS(modp, Class);
             AstVarRef* const queueVarRefp = VN_CAST(nodep->fromp(), VarRef);
             if (!queueVarRefp) {
-                // Warning from ConstraintExprVisitor will be thrown
+                lowerInnerSize(classp, nodep);
+                // Otherwise a warning from ConstraintExprVisitor will be thrown
                 return;
             }
             AstVar* const queueVarp = queueVarRefp->varp();
@@ -4371,27 +4516,50 @@ public:
             AstTaskRef* const setupTaskRefp = new AstTaskRef{fl, setupAllTaskp};
             randomizep->addStmtsp(setupTaskRefp->makeStmt());
 
-            if (!sizeArrayVars.empty()) {
+            const std::vector<InnerSized> innerSized
+                = collectInnerSizedArrays(nodep);
+            if (!sizeArrayVars.empty() || !innerSized.empty()) {
                 AstVar* const sizeOkVarp
                     = addSizeSolvep(randomizep, genp, randModeVarp, sizeArrayVars);
+                AstNodeStmt* resizesp = nullptr;
                 if (AstTask* const resizeAllTaskp
                     = VN_AS(m_memberMap.findMember(nodep, "__Vresize_constrained_arrays"), Task)) {
+                    resizesp = (new AstTaskRef{fl, resizeAllTaskp})->makeStmt();
+                }
+                resizesp = AstNode::addNextNull(resizesp, newInnerSizesResizesp(fl, innerSized));
+                if (resizesp) {
                     randomizep->addStmtsp(
-                        new AstIf{fl, new AstVarRef{fl, sizeOkVarp, VAccess::READ},
-                                  (new AstTaskRef{fl, resizeAllTaskp})->makeStmt(), nullptr});
+                        new AstIf{fl, new AstVarRef{fl, sizeOkVarp, VAccess::READ}, resizesp});
+                }
+                for (const InnerSized& inner : innerSized) {
+                    addArrayElemRefresh(fl, inner.m_sizesp, randomizep, genp);
                 }
                 addConstraintRebuild(randomizep, genp, genp, sizeArrayVars,
                                      (new AstTaskRef{fl, setupAllTaskp})->makeStmt());
-
-                AstVar* const finalOkVarp = new AstVar{fl, VVarType::BLOCKTEMP, "__Vfinal_ok",
-                                                       nodep->findBasicDType(VBasicDTypeKwd::BIT)};
-                finalOkVarp->funcLocal(true);
-                randomizep->addDeclsp(finalOkVarp);
-                randomizep->addStmtsp(new AstAssign{
-                    fl, new AstVarRef{fl, finalOkVarp, VAccess::WRITE}, newSolverCallp(genp)});
-
                 beginValp = new AstAnd{fl, new AstVarRef{fl, sizeOkVarp, VAccess::READ},
-                                       new AstVarRef{fl, finalOkVarp, VAccess::READ}};
+                                       newSolveOkp(randomizep, genp, "__Vfinal_ok")};
+                if (!innerSized.empty()) {
+                    // The elements' sizes are solved now, so the elements are once resized
+                    AstVar* const innerOkVarp = newOkVarp(randomizep, "__Vinner_ok");
+                    randomizep->addStmtsp(new AstAssign{
+                        fl, new AstVarRef{fl, innerOkVarp, VAccess::WRITE}, beginValp});
+                    randomizep->addStmtsp(
+                        new AstIf{fl, new AstVarRef{fl, innerOkVarp, VAccess::READ},
+                                  newElementResizesp(fl, innerSized)});
+                    for (const InnerSized& inner : innerSized) {
+                        addArrayElemRefresh(fl, inner.m_arrp, randomizep, genp);
+                        addArrayElemRefresh(fl, inner.m_sizesp, randomizep, genp);
+                        randomizep->addStmtsp(newSetResizedp(fl, inner, true));
+                    }
+                    addConstraintRebuild(randomizep, genp, genp, sizeArrayVars,
+                                         (new AstTaskRef{fl, setupAllTaskp})->makeStmt());
+                    beginValp
+                        = new AstAnd{fl, new AstVarRef{fl, innerOkVarp, VAccess::READ},
+                                     newSolveOkp(randomizep, genp, "__Vinner_final_ok")};
+                    for (const InnerSized& inner : innerSized) {
+                        randomizep->addStmtsp(newSetResizedp(fl, inner, false));
+                    }
+                }
             } else {
                 beginValp = newSolverCallp(genp);
             }
