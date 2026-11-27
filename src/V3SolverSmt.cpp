@@ -1853,6 +1853,16 @@ class ConstraintExprVisitor final : public VNVisitor {
         if (editFormat(nodep)) return;
         VNRelinker handle;
         FileLine* const fl = nodep->fileline();
+        if (nodep->lsbp()->user1()) {
+            // A random index, solved with the rest, selects from the shifted value as SMT
+            // extract indices are constants. An index past the end then reads as zero.
+            AstNodeExpr* const fromp = nodep->fromp()->unlinkFrBack();
+            AstShiftR* const shiftp
+                = new AstShiftR{fl, fromp, nodep->lsbp()->unlinkFrBack(), fromp->width()};
+            shiftp->user1(true);
+            nodep->fromp(shiftp);
+            nodep->lsbp(new AstConst{fl, AstConst::WidthedValue{}, 32, 0});
+        }
         AstNodeExpr* const msbp = new AstSFormatF{
             fl, "%1d", false,
             new AstAdd{fl, nodep->lsbp()->cloneTreePure(false),

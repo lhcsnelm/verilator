@@ -63,10 +63,21 @@ class RandNestedStructIndexTest;
   constraint c_deep { deep[idx + 1].mid.inner.tag == 4'h6; }
 endclass
 
+// Random index of a bit vector, which can reach past either end of it
+class RandBitIndexTest;
+  rand bit [13:1] vec;
+  rand bit [3:0] idx;
+  constraint c {
+    $countones(vec) == 2;
+    vec[idx] == 1'b1;
+  }
+endclass
+
 module t;
   initial begin
     int randomize_result;
     RandNestedStructIndexTest sobj;
+    RandBitIndexTest bobj;
     static RandArrayIndexTest obj = new();
     RandDynIndexCastTest cobj;
     repeat (20) begin
@@ -88,6 +99,13 @@ module t;
       `checkd(randomize_result, 1);
       `checkd(sobj.arr[sobj.idx].inner.tag, 4'h5);
       `checkd(sobj.deep[sobj.idx + 1].mid.inner.tag, 4'h6);
+    end
+    bobj = new();
+    repeat (20) begin
+      randomize_result = bobj.randomize();
+      `checkd(randomize_result, 1);
+      `checkd($countones(bobj.vec), 2);
+      `checkd(bobj.vec[bobj.idx], 1'b1);
     end
     $write("*-* All Finished *-*\n");
     $finish;
