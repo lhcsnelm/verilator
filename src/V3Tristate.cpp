@@ -449,9 +449,10 @@ public:
 };
 
 //######################################################################
-// A variable written z through a virtual interface, as by a class driver releasing a bus, keeps
-// whether each bit is z in an enable variable that every write to it updates. Its module reads it
-// through a net driven by its value under that enable, so that the nets it drives are released.
+// An interface variable written z through a virtual interface or a hierarchical reference, as by
+// a class driver or testbench releasing a bus, keeps whether each bit is z in an enable variable
+// that every write to it updates. Its interface reads it through a net driven by its value under
+// that enable, so that the nets it drives are released.
 // TristateVisitor lowers other writes of z as drivers.
 
 class TristateVarZVisitor final : public VNVisitor {
@@ -468,6 +469,8 @@ class TristateVarZVisitor final : public VNVisitor {
     bool m_replacing = false;  // Replacing reads by the net, else collecting writes
     std::vector<std::pair<AstNodeAssign*, AstVar*>> m_writes;  // Procedural writes of variables
     std::vector<AstVar*> m_zVarps;  // Variables written z, in order found
+    std::vector<AstVar*> m_xrefZVarps;  // Variables written z through a hierarchical reference
+    std::unordered_map<const AstVar*, AstIface*> m_ifaceOf;  // Interface declaring and reading
 
     // METHODS
     static AstNodeExpr* baseRefp(AstNodeExpr* lhsp) {
@@ -548,6 +551,7 @@ class TristateVarZVisitor final : public VNVisitor {
                 AstVar* const varp = refVarp(refp);
                 m_writes.emplace_back(nodep, varp);
                 const AstMemberRef* const memberrefp = VN_CAST(refp, MemberRef);
+                if (VN_IS(refp, VarXRef) && writesZ(nodep->rhsp())) m_xrefZVarps.push_back(varp);
                 if (memberrefp && writesZ(nodep->rhsp())) {
                     const AstNodeDType* const fromDtp = memberrefp->fromp()->dtypep()->skipRefp();
                     if (const AstIfaceRefDType* const ifaceDtp = VN_CAST(fromDtp, IfaceRefDType)) {
@@ -559,6 +563,13 @@ class TristateVarZVisitor final : public VNVisitor {
         iterateChildren(nodep);
     }
     void visit(AstVarRef* nodep) override {
+        // A variable its interface reads may drive a net there, which its z writes must
+        // release; others are read only through references, and their z writes are drivers
+        if (!m_replacing && nodep->access().isReadOnly()) {
+            if (AstIface* const ifacep = VN_CAST(m_modp, Iface)) {
+                m_ifaceOf.emplace(nodep->varp(), ifacep);
+            }
+        }
         AstVar* const netp = VN_CAST(nodep->varp()->user3p(), Var);
         if (m_replacing && netp && nodep->access().isReadOnly()
             && nodep->varp()->user2p() == m_modp) {
@@ -573,6 +584,10 @@ public:
     // CONSTRUCTORS
     explicit TristateVarZVisitor(AstNetlist* nodep) {
         iterate(nodep);
+        for (AstVar* const varp : m_xrefZVarps) {
+            const auto it = m_ifaceOf.find(varp);
+            if (it != m_ifaceOf.end()) varp->user2p(it->second);
+        }
         for (const auto& pair : m_writes) {
             if (pair.second->user2p()) addEnableWrite(pair.first, getCreateZenp(pair.second));
         }
