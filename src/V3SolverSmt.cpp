@@ -156,8 +156,8 @@ class ConstraintExprVisitor final : public VNVisitor {
     // class also call, unlike that class's __Vsetup_constraints
     AstNodeFTask* m_constraintTaskp = nullptr;
     // (may be null, then new() is used)
-    AstNodeFTask* const m_memberrefInitTaskp;  // Fallback for memberref write_var when
-                                               // classp has no randomize() (inherited members)
+    AstNodeFTask* const m_memberrefInitTaskp;  // randomize() lowered, holding the
+                                               // memberref and selected part write_vars
     AstVar* const m_genp;  // VlRandomizer variable of the class
     AstVar* m_randModeVarp;  // Relevant randmode state variable
     bool m_wantSingle = false;  // Whether to merge constraint expressions with LOGAND
@@ -942,13 +942,12 @@ class ConstraintExprVisitor final : public VNVisitor {
         // Only this class's solver handles a foreign static; its own class still randomizes it
         if (!isForeignStatic(varp)) varp->user3(true);
         if (memberrefOrStructSel) {
+            // The randomize() being lowered, as a base class's one may be lowered already
+            if (m_memberrefInitTaskp) return newInitBlockp(m_memberrefInitTaskp);
             if (AstNodeFTask* const taskp
                 = VN_AS(m_memberMap.findMember(classp, "randomize"), NodeFTask)) {
                 return newInitBlockp(taskp);
             }
-            // Inherited rand members may belong to a base class
-            // that has no randomize(); use the caller's function
-            if (m_memberrefInitTaskp) return newInitBlockp(m_memberrefInitTaskp);
             classp->v3fatalSrc("No randomize() in class");
         } else {
             AstNodeFTask* const taskp = VN_AS(m_memberMap.findMember(classp, "new"), NodeFTask);
@@ -1400,9 +1399,11 @@ class ConstraintExprVisitor final : public VNVisitor {
 
         // Global / inline / class-level member-select refs key on the full path
         // (so same-type sub-objects c1.x, c2.x stay distinct), and a foreign static
-        // is registered in each class using it; a plain class-level variable keys
-        // on user3(). Inline 'with' dedups per function (own solver).
-        const bool perClass = isGlobalConstrained || memberRefp || foreignStatic;
+        // or a selected part is registered in each class using it, as its randomize()
+        // holds the registration; a plain class-level variable keys on user3(). Inline
+        // 'with' dedups per function (own solver).
+        const bool perClass = isGlobalConstrained || memberRefp || structSelOrCMeth
+                              || foreignStatic;
         const bool alreadyWritten = m_inlineInitBlockp ? m_inlineWrittenVars.count(smtName) > 0
                                     : perClass         ? m_writtenVars.count(smtName) > 0
                                                        : varp->user3();
