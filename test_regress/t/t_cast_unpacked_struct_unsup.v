@@ -30,10 +30,6 @@ module t;
     byte b;
   } real_t;
 
-  typedef byte bq_t[$];
-  typedef byte bd_t[];
-  typedef byte b2_t[2];
-
   initial begin
     s16_t s16;
     str_t sts;
@@ -41,8 +37,6 @@ module t;
     Cls obj;
     byte dyn[];
     byte que[$];
-    byte b2[2];
-    int words[2];
     string str;
     int word;
     uni_t uni;
@@ -60,10 +54,6 @@ module t;
     s16 = s16_t'(obj);  // Class handle
     {>>{rs, word}} = 104'h0;  // Real member in a stream target with other values
     {>>{{<<8{rs}}}} = 72'h0;  // Or in another stream
-    que = bq_t'(b2);  // Fixed-size array as a queue, of the same elements
-    dyn = bd_t'(b2);  // Or as a dynamic array
-    b2 = b2_t'(dyn);  // Or the other way
-    que = bq_t'(words);  // Also of other elements
   end
 
 endmodule

@@ -3643,6 +3643,9 @@ class WidthVisitor final : public VNVisitor {
                 return;
             }
             const auto castable = AstNode::computeCastable(toDtp, fromDtp, nodep->fromp());
+            if (castable == VCastable::UNSUPPORTED && streamCastAssigned(nodep, toDtp, fromDtp)) {
+                return;
+            }
             // An equivalent array is assignment compatible, so cast as assigned
             // (IEEE 1800-2023 6.24.1), but otherwise casting an unpacked array or struct is a
             // bit-stream cast
@@ -3864,6 +3867,27 @@ class WidthVisitor final : public VNVisitor {
                             false);
             VL_DANGLING(underp);
         }
+    }
+    // A bit-stream cast between unpacked arrays, one dynamically sized, assigned to a variable
+    // of its type is the value streamed into the variable (IEEE 1800-2023 6.24.3)
+    bool streamCastAssigned(AstCast* const nodep, const AstNodeDType* const toDtp,
+                            const AstNodeDType* const fromDtp) {
+        const AstNodeAssign* const assignp = VN_CAST(nodep->backp(), NodeAssign);
+        if (!assignp || assignp->rhsp() != nodep || !toDtp->isNonPackedArray()
+            || !fromDtp->isNonPackedArray()
+            || !(toDtp->isDynamicallySized() || fromDtp->isDynamicallySized())
+            || !isBitstreamDType(toDtp, true) || !isBitstreamDType(fromDtp, false)
+            || !AstNode::computeCastable(assignp->lhsp()->dtypep()->skipRefp(), toDtp, nullptr)
+                    .isSameish()) {
+            return false;
+        }
+        FileLine* const fl = nodep->fileline();
+        AstStreamR* const streamp
+            = new AstStreamR{fl, nodep->fromp()->unlinkFrBack(), new AstConst{fl, 1}};
+        nodep->replaceWith(streamp);
+        VL_DO_DANGLING(pushDeletep(nodep), nodep);
+        userIterate(streamp, m_vup);
+        return true;
     }
     // Report why a static cast is illegal or unsupported, returning true if it is
     bool castError(const AstCast* const nodep, const AstNodeDType* const toDtp,
