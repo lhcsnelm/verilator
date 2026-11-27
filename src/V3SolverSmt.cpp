@@ -1382,8 +1382,8 @@ class ConstraintExprVisitor final : public VNVisitor {
         // or a selected part is registered in each class using it, as its randomize()
         // holds the registration; a plain class-level variable keys on user3(). Inline
         // 'with' dedups per function (own solver).
-        const bool perClass = isGlobalConstrained || memberRefp || structSelOrCMeth
-                              || foreignStatic;
+        const bool perClass
+            = isGlobalConstrained || memberRefp || structSelOrCMeth || foreignStatic;
         const bool alreadyWritten = m_inlineInitBlockp ? m_inlineWrittenVars.count(smtName) > 0
                                     : perClass         ? m_writtenVars.count(smtName) > 0
                                                        : varp->user3();
