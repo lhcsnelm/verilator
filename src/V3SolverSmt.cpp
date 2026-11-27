@@ -4636,27 +4636,125 @@ public:
             }
         }
     }
+    // Replace '.size()' of the dynamic arrays and queues std::randomize randomizes with size
+    // variables, solved before the elements. Returns the arrays.
+    std::vector<AstVar*> replaceStdRandomizeSizes(AstFunc* const randomizeFuncp,
+                                                  AstNode* const capturedTreep) {
+        std::vector<AstCMethodHard*> sizeps;
+        capturedTreep->foreachAndNext([&](AstCMethodHard* const methodp) {
+            if (methodp->method() != VCMethod::DYN_SIZE || SmtUtil::isSolveBeforeItem(methodp))
+                return;
+            const AstVarRef* const refp = VN_CAST(methodp->fromp(), VarRef);
+            if (refp && refp->varp()->isStdRandomizeArg()) sizeps.push_back(methodp);
+        });
+        std::vector<AstVar*> arrays;
+        for (AstCMethodHard* const methodp : sizeps) {
+            FileLine* const fl = methodp->fileline();
+            AstVar* const arrVarp = VN_AS(methodp->fromp(), VarRef)->varp();
+            if (!arrVarp->user4p()) {
+                AstVar* const sizeVarp = new AstVar{fl, VVarType::BLOCKTEMP,
+                                                    SmtUtil::sizeVarName(arrVarp),
+                                                    methodp->findIntDType()};
+                sizeVarp->funcLocal(true);
+                sizeVarp->setStdRandomizeArg();
+                randomizeFuncp->addDeclsp(sizeVarp);
+                arrVarp->user4p(sizeVarp);
+                arrays.push_back(arrVarp);
+                capturedTreep->addNext(createSizeGteZeroConstraint(fl, sizeVarp));
+            }
+            AstVarRef* const sizeRefp
+                = new AstVarRef{fl, VN_AS(arrVarp->user4p(), Var), VAccess::READ};
+            sizeRefp->user1(true);
+            methodp->replaceWith(sizeRefp);
+            VL_DO_DANGLING(methodp->deleteTree(), methodp);
+        }
+        return arrays;
+    }
+    void addStdRandomizeSetup(AstFunc* const randomizeFuncp, AstBegin* const holderp,
+                              AstVar* const stdrandp) {
+        FileLine* const fl = holderp->fileline();
+        AstBegin* const setupBlockp = new AstBegin{fl, "__Vsetup_constraints", holderp, true};
+        randomizeFuncp->addStmtsp(setupBlockp);
+        expandUniqueElementList(holderp->declsp());
+        ConstraintExprVisitor{
+            nullptr, m_memberMap,   holderp->declsp(),     setupBlockp,   stdrandp,
+            nullptr, m_writtenVars, &m_uniqueConstraintId, m_uniqueNames, nullptr};
+        SmtUtil::replaceWithLowered(holderp);
+    }
+    // Solve the sizes, resize the arrays to them, then solve again for the elements with the
+    // sizes pinned. Returns whether the first solve succeeded.
+    AstVar* addStdRandomizeSizeSolve(AstFunc* const randomizeFuncp,
+                                     const std::vector<AstVar*>& arrays, AstBegin* const holderp,
+                                     AstVar* const stdrandp) {
+        FileLine* const fl = holderp->fileline();
+        AstVar* const sizeOkVarp
+            = new AstVar{fl, VVarType::BLOCKTEMP, "__Vsize_ok",
+                         randomizeFuncp->findBasicDType(VBasicDTypeKwd::BIT)};
+        sizeOkVarp->funcLocal(true);
+        randomizeFuncp->addDeclsp(sizeOkVarp);
+        randomizeFuncp->addStmtsp(new AstAssign{
+            fl, new AstVarRef{fl, sizeOkVarp, VAccess::WRITE}, newStdSolverCallp(stdrandp)});
+        AstNodeStmt* resizesp = nullptr;
+        for (AstVar* const arrVarp : arrays) {
+            AstCMethodHard* const resizep = new AstCMethodHard{
+                fl, new AstVarRef{fl, arrVarp, VAccess::WRITE}, VCMethod::DYN_RESIZE,
+                new AstVarRef{fl, VN_AS(arrVarp->user4p(), Var), VAccess::READ}};
+            resizep->dtypeSetVoid();
+            resizesp = AstNode::addNext(resizesp, resizep->makeStmt());
+        }
+        randomizeFuncp->addStmtsp(
+            new AstIf{fl, new AstVarRef{fl, sizeOkVarp, VAccess::READ}, resizesp});
+        randomizeFuncp->addStmtsp(implementConstraintsClearAll(fl, stdrandp));
+        for (AstVar* const arrVarp : arrays) {
+            // The solver gives every element a value, not only the constrained ones
+            AstCMethodHard* const writep
+                = new AstCMethodHard{fl, new AstVarRef{fl, stdrandp, VAccess::READWRITE},
+                                     VCMethod::RANDOMIZER_WRITE_VAR};
+            writep->dtypeSetVoid();
+            writep->addPinsp(new AstVarRef{fl, arrVarp, VAccess::WRITE});
+            writep->addPinsp(new AstConst{
+                fl, AstConst::Unsized64{},
+                static_cast<uint64_t>(SmtUtil::arrayElementDTypep(arrVarp->dtypep())->width())});
+            AstCExpr* const namep
+                = new AstCExpr{fl, AstCExpr::Pure{}, "\"" + arrVarp->name() + "\""};
+            namep->dtypeSetUInt32();
+            writep->addPinsp(namep);
+            writep->addPinsp(new AstConst{
+                fl, AstConst::Unsized64{},
+                static_cast<uint64_t>(arrVarp->dtypep()->dimensions(false).second)});
+            randomizeFuncp->addStmtsp(writep->makeStmt());
+        }
+        addStdRandomizeSetup(randomizeFuncp, holderp, stdrandp);
+        for (AstVar* const arrVarp : arrays) {
+            randomizeFuncp->addStmtsp(newPinSizeVariable(fl, arrVarp, stdrandp));
+        }
+        return sizeOkVarp;
+    }
+    static AstCExpr* newStdSolverCallp(AstVar* const stdrandp) {
+        FileLine* const fl = stdrandp->fileline();
+        AstCExpr* const callp = new AstCExpr{fl};
+        callp->dtypeSetBit();
+        callp->add(new AstVarRef{fl, stdrandp, VAccess::READWRITE});
+        callp->add(".next()");
+        return callp;
+    }
     AstNodeExpr* lowerStdRandomizeWith(AstNodeFTaskRef* nodep, AstFunc* randomizeFuncp,
                                        AstNode* capturedTreep, AstVar* stdrandp) override {
         FileLine* const fl = nodep->fileline();
         // Clear old constraints and variables for std::randomize with clause
         randomizeFuncp->addStmtsp(
             implementConstraintsClearAll(randomizeFuncp->fileline(), stdrandp));
+        const std::vector<AstVar*> arrays
+            = replaceStdRandomizeSizes(randomizeFuncp, capturedTreep);
         AstBegin* const holderp = SmtUtil::newItemsHolderp(fl, capturedTreep);
-        AstBegin* const setupBlockp = new AstBegin{fl, "__Vsetup_constraints", holderp, true};
-        randomizeFuncp->addStmtsp(setupBlockp);
-        {
-            expandUniqueElementList(holderp->declsp());
-            ConstraintExprVisitor{
-                nullptr, m_memberMap,   holderp->declsp(),     setupBlockp,   stdrandp,
-                nullptr, m_writtenVars, &m_uniqueConstraintId, m_uniqueNames, nullptr};
-            SmtUtil::replaceWithLowered(holderp);
-        }
-        AstCExpr* const solverCallp = new AstCExpr{fl};
-        solverCallp->dtypeSetBit();
-        solverCallp->add(new AstVarRef{fl, stdrandp, VAccess::READWRITE});
-        solverCallp->add(".next()");
-        return solverCallp;
+        // Lowered again once the arrays are resized
+        AstBegin* const elementsHolderp = arrays.empty() ? nullptr : holderp->cloneTree(false);
+        addStdRandomizeSetup(randomizeFuncp, holderp, stdrandp);
+        if (arrays.empty()) return newStdSolverCallp(stdrandp);
+        AstVar* const sizeOkVarp
+            = addStdRandomizeSizeSolve(randomizeFuncp, arrays, elementsHolderp, stdrandp);
+        return new AstAnd{fl, new AstVarRef{fl, sizeOkVarp, VAccess::READ},
+                          newStdSolverCallp(stdrandp)};
     }
     AstNodeExpr* lowerCheckOnly(AstClass* classp, AstFunc* funcp) override {
         FileLine* const fl = classp->fileline();
