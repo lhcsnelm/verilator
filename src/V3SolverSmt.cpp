@@ -414,9 +414,8 @@ class ConstraintExprVisitor final : public VNVisitor {
             AstCMethodHard* const currentp
                 = new AstCMethodHard{fl, refp->cloneTree(false), VCMethod::DYN_SIZE};
             currentp->dtypeFrom(sizeVarp);
-            AstVarRef* const sizeRefp
-                = new AstVarRef{fl, VN_AS(sizeVarp->user2p(), NodeModule), sizeVarp,
-                                VAccess::READ};
+            AstVarRef* const sizeRefp = new AstVarRef{fl, VN_AS(sizeVarp->user2p(), NodeModule),
+                                                      sizeVarp, VAccess::READ};
             sizeRefp->user1(true);
             AstEq* const eqp = new AstEq{fl, currentp, sizeRefp};
             eqp->user1(true);
@@ -2592,8 +2591,8 @@ class ConstraintExprVisitor final : public VNVisitor {
             }
         }
         if (AstNodeExpr* const condp = newCurrentSizeCondp(nodep->exprp())) {
-            AstLogIf* const ifp = new AstLogIf{condp->fileline(), condp,
-                                               nodep->exprp()->unlinkFrBack()};
+            AstLogIf* const ifp
+                = new AstLogIf{condp->fileline(), condp, nodep->exprp()->unlinkFrBack()};
             ifp->user1(true);
             nodep->exprp(ifp);
         }
