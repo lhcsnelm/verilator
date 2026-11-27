@@ -2878,16 +2878,28 @@ class TaskFinishVisitor final : public VNVisitor {
     // NODE STATE
     //  AstCFunc::user1()       -> bool. May execute $finish
     //  AstNodeStmt::user1()    -> bool. Return added after it
+    //  AstNodeProcedure::user2p(), AstForkItem::user2p() -> AstJumpBlock*. Around its body
     const VNUser1InUse m_inuser1;
+    const VNUser2InUse m_inuser2;
 
     // STATE
     AstClass* m_classp = nullptr;  // Current class
     AstCFunc* m_cfuncp = nullptr;  // Current function
+    // Current procedure or fork branch, left by a jump as a function may hold several
+    AstNode* m_processp = nullptr;
     bool m_inBody = false;  // In a function or procedure
+    bool m_inLoop = false;  // In a loop of the current function or procedure
     bool m_inExprStmt = false;  // In statements of an expression, emitted as a lambda
     AstNodeStmt* m_stmtp = nullptr;  // Current statement that can be followed by a return
-    std::vector<std::pair<AstNodeStmt*, AstCFunc*>> m_calls;  // Calling statement, callee
-    std::vector<AstNodeStmt*> m_finishps;  // $finish statements
+    struct Call final {
+        AstNodeStmt* m_stmtp;  // Calling statement
+        AstNode* m_processp;  // Its m_processp
+        AstCFunc* m_funcp;  // Callee
+    };
+    std::vector<Call> m_calls;
+    std::vector<std::pair<AstNodeStmt*, AstNode*>> m_finishps;  // $finish statement, process
+    // Fork branch -> its fork statement and that statement's process
+    std::unordered_map<const AstForkItem*, std::pair<AstNodeStmt*, AstNode*>> m_forkParents;
     std::unordered_map<const AstCFunc*, std::vector<AstCFunc*>> m_callers;  // Callee -> callers
     // Methods by name, as a call may dispatch to any override
     std::unordered_map<std::string, std::vector<AstCFunc*>> m_methods;
@@ -2896,8 +2908,39 @@ class TaskFinishVisitor final : public VNVisitor {
     void markFinishing(AstCFunc* funcp) {
         if (funcp && !funcp->user1SetOnce()) m_workList.push_back(funcp);
     }
-    static void addReturnAfter(AstNodeStmt* stmtp) {
-        if (!stmtp->user1SetOnce()) stmtp->addNextHere(new AstFinishReturn{stmtp->fileline()});
+    template <typename T>
+    static AstJumpBlock* bodyBlockp(T* nodep) {
+        if (!nodep->user2p()) {
+            AstJumpBlock* const blockp
+                = new AstJumpBlock{nodep->fileline(), nodep->stmtsp()->unlinkFrBackWithNext()};
+            nodep->addStmtsp(blockp);
+            nodep->user2p(blockp);
+        }
+        return VN_AS(nodep->user2p(), JumpBlock);
+    }
+    static AstJumpBlock* processBlockp(AstNode* processp) {
+        if (AstForkItem* const itemp = VN_CAST(processp, ForkItem)) return bodyBlockp(itemp);
+        return bodyBlockp(VN_AS(processp, NodeProcedure));
+    }
+    void addReturnAfter(AstNodeStmt* stmtp, AstNode* processp) {
+        if (stmtp->user1SetOnce()) return;
+        FileLine* const flp = stmtp->fileline();
+        if (!processp) {
+            stmtp->addNextHere(new AstFinishReturn{flp});
+            return;
+        }
+        // A plain jump, which V3Const removes where nothing follows it in the process
+        AstCExpr* const condp
+            = new AstCExpr{flp,
+                           "VL_UNLIKELY(vlSymsp->_vm_contextp__->gotFinish()"
+                           " && !vlSymsp->_vm_contextp__->executingFinal())",
+                           1};
+        stmtp->addNextHere(new AstIf{flp, condp, new AstJumpGo{flp, processBlockp(processp)}});
+        // The process that forked this branch continues after the fork
+        if (const AstForkItem* const itemp = VN_CAST(processp, ForkItem)) {
+            const auto& parent = m_forkParents.at(itemp);
+            addReturnAfter(parent.first, parent.second);
+        }
     }
 
     // VISITORS
@@ -2908,22 +2951,44 @@ class TaskFinishVisitor final : public VNVisitor {
     }
     void visit(AstCFunc* nodep) override {
         VL_RESTORER(m_cfuncp);
+        VL_RESTORER(m_processp);
+        VL_RESTORER(m_inLoop);
+        m_inLoop = false;
         VL_RESTORER(m_inBody);
         m_cfuncp = nodep;
+        m_processp = nullptr;
         m_inBody = true;
         if (m_classp) m_methods[nodep->name()].push_back(nodep);
         iterateChildren(nodep);
     }
     void visit(AstNodeProcedure* nodep) override {
         VL_RESTORER(m_cfuncp);
+        VL_RESTORER(m_processp);
+        VL_RESTORER(m_inLoop);
+        m_inLoop = false;
         VL_RESTORER(m_inBody);
         m_cfuncp = nullptr;
+        m_processp = nodep;
         m_inBody = true;
         iterateChildren(nodep);
     }
+    void visit(AstForkItem* nodep) override {
+        VL_RESTORER(m_processp);
+        m_forkParents.emplace(nodep, std::make_pair(m_stmtp, m_processp));
+        m_processp = nodep;
+        iterateChildren(nodep);
+    }
+    void visit(AstLoop* nodep) override {
+        VL_RESTORER(m_inLoop);
+        m_inLoop = true;
+        visit(static_cast<AstNodeStmt*>(nodep));
+    }
     void visit(AstFinish* nodep) override {
         markFinishing(m_cfuncp);
-        m_finishps.push_back(m_inExprStmt ? m_stmtp : nodep);
+        // A process needs to stop only in a loop, which could otherwise run on forever
+        if (!m_processp || m_inLoop) {
+            m_finishps.emplace_back(m_inExprStmt ? m_stmtp : nodep, m_processp);
+        }
     }
     void visit(AstExprStmt* nodep) override {
         VL_RESTORER(m_inExprStmt);
@@ -2941,7 +3006,7 @@ class TaskFinishVisitor final : public VNVisitor {
         iterateChildren(nodep);
     }
     void visit(AstNodeCCall* nodep) override {
-        if (m_stmtp) m_calls.emplace_back(m_stmtp, nodep->funcp());
+        if (m_stmtp) m_calls.push_back({m_stmtp, m_processp, nodep->funcp()});
         if (m_cfuncp) m_callers[nodep->funcp()].push_back(m_cfuncp);
         iterateChildren(nodep);
     }
@@ -2961,10 +3026,10 @@ public:
                 for (AstCFunc* const methodp : it->second) markFinishing(methodp);
             }
         }
-        for (const auto& pair : m_calls) {
-            if (pair.second->user1()) addReturnAfter(pair.first);
+        for (const Call& call : m_calls) {
+            if (call.m_funcp->user1()) addReturnAfter(call.m_stmtp, call.m_processp);
         }
-        for (AstNodeStmt* const stmtp : m_finishps) addReturnAfter(stmtp);
+        for (const auto& pair : m_finishps) addReturnAfter(pair.first, pair.second);
     }
     ~TaskFinishVisitor() override = default;
 };
