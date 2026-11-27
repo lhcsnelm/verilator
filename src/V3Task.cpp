@@ -2930,11 +2930,10 @@ class TaskFinishVisitor final : public VNVisitor {
             return;
         }
         // A plain jump, which V3Const removes where nothing follows it in the process
-        AstCExpr* const condp
-            = new AstCExpr{flp,
-                           "VL_UNLIKELY(vlSymsp->_vm_contextp__->gotFinish()"
-                           " && !vlSymsp->_vm_contextp__->executingFinal())",
-                           1};
+        AstCExpr* const condp = new AstCExpr{flp,
+                                             "VL_UNLIKELY(vlSymsp->_vm_contextp__->gotFinish()"
+                                             " && !vlSymsp->_vm_contextp__->executingFinal())",
+                                             1};
         stmtp->addNextHere(new AstIf{flp, condp, new AstJumpGo{flp, processBlockp(processp)}});
         // The process that forked this branch continues after the fork
         if (const AstForkItem* const itemp = VN_CAST(processp, ForkItem)) {
