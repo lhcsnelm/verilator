@@ -2897,8 +2897,39 @@ public:
 //######################################################################
 // Randomize method class functions
 
+// The solver knows each variable by name, so a rand member shadowing an inherited member of
+// the same name is renamed after its class
+static void renameShadowingRandVars(AstNetlist* netlistp) {
+    std::unordered_set<const AstVar*> renamed;
+    netlistp->foreach([&](AstClass* const classp) {
+        std::unordered_set<std::string> inheritedNames;
+        for (const AstClassExtends* extendsp = classp->extendsp(); extendsp;) {
+            const AstClass* const basep = extendsp->classp();
+            for (const AstNode* const itemp : basep->memberspList()) {
+                if (const AstVar* const varp = VN_CAST(itemp, Var)) {
+                    inheritedNames.insert(varp->origName());
+                }
+            }
+            extendsp = basep->extendsp();
+        }
+        if (inheritedNames.empty()) return;
+        for (AstNode* const itemp : classp->memberspList()) {
+            AstVar* const varp = VN_CAST(itemp, Var);
+            if (!varp || !varp->rand().isRandomizable() || !inheritedNames.count(varp->origName()))
+                continue;
+            varp->name(varp->origName() + "__V" + classp->name());
+            renamed.insert(varp);
+        }
+    });
+    if (renamed.empty()) return;
+    netlistp->foreach([&](AstMemberRef* const refp) {
+        if (renamed.count(refp->varp())) refp->name(refp->varp()->name());
+    });
+}
+
 void V3Randomize::randomizeNetlist(AstNetlist* nodep) {
     UINFO(2, __FUNCTION__ << ":");
+    renameShadowingRandVars(nodep);
     {
         const RandomizeMarkVisitor markVisitor{nodep};
         const RandomizeVisitor randomizeVisitor{nodep};
