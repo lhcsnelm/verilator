@@ -162,6 +162,7 @@ class ConstraintExprVisitor final : public VNVisitor {
     AstVar* m_randModeVarp;  // Relevant randmode state variable
     bool m_wantSingle = false;  // Whether to merge constraint expressions with LOGAND
     VMemberMap& m_memberMap;  // Member names cached for fast lookup
+    const AstNode* m_assocFromp = nullptr;  // Associative array of the element lowered
     bool m_structSel = false;  // Marks when inside structSel
                                // (used to format "%s.%s" for struct arrays and nested structs)
     bool m_deferRandModeHoist = false;  // Wait for the complete struct member path
@@ -1368,6 +1369,11 @@ class ConstraintExprVisitor final : public VNVisitor {
             }
             memberRefp = VN_AS(topMemberRefp, MemberRef)->cloneTree(false);
             smtName = buildMemberPath(memberRefp);
+        } else if (nodep == m_assocFromp) {
+            // An associative array's elements, which may change between randomize() calls
+            structSelOrCMeth = true;
+            selectedDtypep = varp->dtypep()->skipRefp()->subDTypep();
+            smtName = nodep->name();
         } else if (isSelOrMethod(nodep->backp())) {
             // Build complete path for topmost StructSel, element select or CMethodHard
             AstNode* topNodep = nodep->backp();
@@ -1989,6 +1995,9 @@ class ConstraintExprVisitor final : public VNVisitor {
     void visit(AstAssocSel* nodep) override {
         if (editFormat(nodep)) return;
         FileLine* const fl = nodep->fileline();
+        VL_RESTORER(m_assocFromp);
+        // Struct elements are registered member by member, as they are lowered
+        if (!VN_IS(nodep->dtypep()->skipRefp(), NodeUOrStructDType)) m_assocFromp = nodep->fromp();
         // Keep a pre-edit clone for the rand_mode hoist below.
         AstNodeExpr* const origp = nodep->cloneTree(false);
         AstNodeExpr* const bitp = nodep->bitp();
