@@ -3493,10 +3493,8 @@ class SolverSmtLowering final : public V3SolverLowering {
     static AstNodeExpr* newDistRangeMembership(AstDist* distp, const AstInsideRange* irp) {
         FileLine* const fl = distp->fileline();
         const bool isSigned = distp->exprp()->isSigned();
-        AstNodeExpr* const distExprGtep = distp->exprp()->cloneTreePure(false);
-        AstNodeExpr* const distExprLtep = distp->exprp()->cloneTreePure(false);
-        distExprGtep->user1(true);
-        distExprLtep->user1(true);
+        AstNodeExpr* const distExprGtep = newDistExprp(distp);
+        AstNodeExpr* const distExprLtep = newDistExprp(distp);
         AstNodeExpr* const gep
             = isSigned ? static_cast<AstNodeExpr*>(
                              new AstGteS{fl, distExprGtep, irp->lhsp()->cloneTreePure(false)})
@@ -3559,13 +3557,19 @@ class SolverSmtLowering final : public V3SolverLowering {
             return newDistRangeMembership(distp, irp);
         }
         FileLine* const fl = distp->fileline();
-        AstNodeExpr* const eqExprp = distp->exprp()->cloneTreePure(false);
-        eqExprp->user1(true);
+        AstNodeExpr* const eqExprp = newDistExprp(distp);
         AstNodeExpr* const eqp = new AstEq{fl, eqExprp, rangep->cloneTreePure(false)};
         eqp->user1(true);
         return eqp;
     }
 
+    // The value a dist constrains, random-dependent only where it is, as a state value it
+    // names, such as a non-rand member of a rand object, is not solved for
+    static AstNodeExpr* newDistExprp(const AstDist* distp) {
+        AstNodeExpr* const exprp = distp->exprp()->cloneTreePure(false);
+        exprp->user1(distp->exprp()->user1());
+        return exprp;
+    }
     // Hard constraint that the dist value stays inside the union of its ranges
     // (IEEE 1800-2023 18.5.3: values outside the set must never appear).
     AstConstraintExpr* buildDistMembership(AstDist* distp,
@@ -3771,8 +3775,7 @@ class SolverSmtLowering final : public V3SolverLowering {
 
     AstNodeExpr* newUniformRangePick(AstDist* distp, const AstInsideRange* irp) {
         FileLine* const fl = distp->fileline();
-        AstNodeExpr* const distExprCopyp = distp->exprp()->cloneTreePure(false);
-        distExprCopyp->user1(true);
+        AstNodeExpr* const distExprCopyp = newDistExprp(distp);
         const int distWidth = distp->exprp()->width();
         const AstConst* const lopCp = VN_CAST(irp->lhsp(), Const);
         const AstConst* const hipCp = VN_CAST(irp->rhsp(), Const);
@@ -3820,8 +3823,7 @@ class SolverSmtLowering final : public V3SolverLowering {
             } else if (irp) {
                 constraintExprp = newUniformRangePick(distp, irp);
             } else {
-                AstNodeExpr* const distExprCopyp = distp->exprp()->cloneTreePure(false);
-                distExprCopyp->user1(true);
+                AstNodeExpr* const distExprCopyp = newDistExprp(distp);
                 constraintExprp
                     = new AstEq{fl, distExprCopyp, buckets[i].rangep->cloneTreePure(false)};
                 constraintExprp->user1(true);
