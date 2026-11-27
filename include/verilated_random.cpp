@@ -563,6 +563,11 @@ static bool solverSamples() {
     return Verilated::threadContextp()->randSampler() == VerilatedRandSampler::SAMPLER_SOLVER;
 }
 
+static constexpr uint8_t PIN_EXCLUDED_AFTER = 8;  // Drops, never kept, before a value is skipped
+static constexpr uint8_t PIN_RETRY_EVERY = 32;  // A skipped value is pinned again this often
+static constexpr size_t MAX_PIN_RECORDS = 4096;  // Constraint sets remembered
+static constexpr int PIN_DRAWS = 4;  // Draws of a variable's pins before dropping conflicts
+
 // Owns the solver process; serializes transactions and replaces a solver that
 // died or was left out of step with the reply stream
 class VlSolverSession final {
@@ -580,6 +585,13 @@ class VlSolverSession final {
     std::string m_program VL_GUARDED_BY(m_mutex);  // Storage backing m_argv
     std::vector<const char*> m_argv VL_GUARDED_BY(m_mutex);  // Solver argv
     bool m_warnedRestart VL_GUARDED_BY(m_mutex) = false;
+    // Per constraint set, how each diversity pin fared, so a bit value constraints exclude
+    // is not pinned again, as its conflict would cost a solver round each time
+    struct PinRecord final {
+        uint8_t m_dropped[2] = {0, 0};  // Times pinned to 0/1 and dropped as conflicting
+        bool m_kept[2] = {false, false};  // Ever pinned to 0/1 in a solution
+    };
+    std::unordered_map<size_t, std::vector<PinRecord>> m_pinRecords VL_GUARDED_BY(m_mutex);
 
 public:
     std::iostream& os() VL_REQUIRES(m_mutex) { return m_proc; }
@@ -1126,9 +1138,9 @@ bool VlRandomizer::nextFlat(VlRNG& rngr, VlSolverSession& sess,
         // trivially UNSAT after the first cycle.
         if (!m_checkOnly) emitRandcExclusions(os);
 
-        relaxSoftConstraints(sess);
-        os << "(check-sat)\n";
-        const VlSolverStatus status = sess.readStatus();
+        const bool relaxedSat = relaxSoftConstraints(sess);
+        if (!relaxedSat) os << "(check-sat)\n";
+        const VlSolverStatus status = relaxedSat ? VlSolverStatus::SAT : sess.readStatus();
 
         if (status != VlSolverStatus::SAT) {
             if (status != VlSolverStatus::UNSAT) return false;
@@ -1475,42 +1487,101 @@ VlSolverStatus VlRandomizer::solveDiversityPins(VlRNG& rngr, VlSolverSession& se
                                                 const std::vector<const VlRandomVar*>& vars)
     VL_REQUIRES(sess.m_mutex) {
     std::iostream& os = sess.os();
-    // Tie each free bit to a random target via an assumption literal;
-    // drop one conflicting literal per round until compatible
-    int npins = 0;
-    for (const VlRandomVar* const varp : vars) {
-        const int w = varp->totalWidth();
-        for (int b = 0; b < w; ++b) {
-            const bool target = (VL_RANDOM_RNG_I(rngr) & 1);
-            os << "(declare-fun __Va" << npins << " () Bool)\n";
-            os << "(assert (= __Va" << npins << " (=";
-            varp->emitExtract(os, b);
-            os << " #b" << (target ? '1' : '0') << ")))\n";
-            ++npins;
-        }
+    // Constraint sets told apart by their text and variables
+    size_t key = std::hash<size_t>{}(vars.size());
+    const auto mix = [&key](const std::string& str) {
+        key ^= std::hash<std::string>{}(str) + 0x9e3779b97f4a7c15ULL + (key << 6) + (key >> 2);
+    };
+    for (const std::string& constraint : m_constraints) mix(constraint);
+    for (const std::string& constraint : m_softConstraints) mix(constraint);
+    for (const VlRandomVar* const varp : vars) mix(varp->name());
+    if (sess.m_pinRecords.size() > MAX_PIN_RECORDS) sess.m_pinRecords.clear();
+    std::vector<VlSolverSession::PinRecord>& records = sess.m_pinRecords[key];
+    // Tie each free bit to a random target via an assumption literal. A variable whose pins
+    // conflict is drawn again, which samples its legal values uniformly, else a conflicting
+    // pin is dropped, one per round until compatible.
+    struct Pin final {
+        const VlRandomVar* m_varp;  // Variable pinned
+        int m_bit;  // Its bit pinned
+        size_t m_var;  // Index of the variable, among vars
+        int m_target;  // Value pinned to, or -1 where not pinned
+        int m_lit;  // Assumption literal holding the pin
+        bool m_dropped;  // Dropped as conflicting
+    };
+    std::vector<Pin> pins;
+    std::vector<int> pinOfLit;  // Per assumption literal, its pin
+    const auto pinTo = [&](Pin& pin, int target) {
+        pin.m_target = target;
+        pin.m_lit = static_cast<int>(pinOfLit.size());
+        pinOfLit.push_back(static_cast<int>(&pin - pins.data()));
+        os << "(declare-fun __Va" << pin.m_lit << " () Bool)\n";
+        os << "(assert (= __Va" << pin.m_lit << " (=";
+        pin.m_varp->emitExtract(os, pin.m_bit);
+        os << " #b" << target << ")))\n";
+    };
+    for (size_t v = 0; v < vars.size(); ++v) {
+        for (int b = 0; b < vars[v]->totalWidth(); ++b) pins.push_back({vars[v], b, v, -1, -1});
     }
-    std::vector<bool> dropped(npins, false);
-    for (int round = 0; round <= npins; ++round) {
+    if (records.size() < pins.size()) records.resize(pins.size());
+    const auto drawVar = [&](size_t var) {
+        for (size_t k = 0; k < pins.size(); ++k) {
+            Pin& pin = pins[k];
+            if (pin.m_var != var || pin.m_dropped) continue;
+            const int target = VL_RANDOM_RNG_I(rngr) & 1;
+            const VlSolverSession::PinRecord& record = records[k];
+            // A value constraints may exclude is tried again now and then
+            if (!record.m_kept[target] && record.m_dropped[target] >= PIN_EXCLUDED_AFTER
+                && (record.m_dropped[target] % PIN_RETRY_EVERY)) {
+                pin.m_target = -1;
+            } else {
+                pinTo(pin, target);
+            }
+        }
+    };
+    for (size_t v = 0; v < vars.size(); ++v) drawVar(v);
+    std::vector<int> draws(vars.size(), 1);
+    const int maxRounds = static_cast<int>(pins.size() + vars.size() * PIN_DRAWS);
+    for (int round = 0; round <= maxRounds; ++round) {
         os << "(check-sat-assuming (";
-        for (int k = 0; k < npins; ++k) {
-            if (!dropped[k]) os << " __Va" << k;
+        for (const Pin& pin : pins) {
+            if (pin.m_target >= 0 && !pin.m_dropped) os << " __Va" << pin.m_lit;
         }
         os << "))\n";
         const VlSolverStatus status = sess.readStatus();
         // On SAT the model is to be read; unknown or failure leaves the base solution
-        if (status != VlSolverStatus::UNSAT) return status;
-        // get-unsat-assumptions only echoes still-active literals,
-        // so the first in-range index is a live conflicting bit.
-        const std::vector<int> core = readUnsatAssumptions(sess);
-        bool droppedOne = false;
-        for (const int idx : core) {
-            if (idx < npins) {
-                dropped[idx] = true;
-                droppedOne = true;
-                break;
+        if (status != VlSolverStatus::UNSAT) {
+            if (status == VlSolverStatus::SAT) {
+                for (size_t k = 0; k < pins.size(); ++k) {
+                    const Pin& pin = pins[k];
+                    if (pin.m_target < 0) continue;
+                    VlSolverSession::PinRecord& record = records[k];
+                    if (!pin.m_dropped) {
+                        record.m_kept[pin.m_target] = true;
+                    } else if (record.m_dropped[pin.m_target] < UINT8_MAX) {
+                        ++record.m_dropped[pin.m_target];
+                    }
+                }
             }
+            return status;
         }
-        if (!droppedOne) return VlSolverStatus::UNSAT;
+        // The first literal of the core still assumed is a conflicting pin
+        const std::vector<int> core = readUnsatAssumptions(sess);
+        const auto it = std::find_if(core.begin(), core.end(), [&](int lit) {
+            if (lit < 0 || lit >= static_cast<int>(pinOfLit.size())) return false;
+            const Pin& pin = pins[pinOfLit[lit]];
+            return pin.m_lit == lit && pin.m_target >= 0 && !pin.m_dropped;
+        });
+        if (it == core.end()) return VlSolverStatus::UNSAT;
+        Pin& pin = pins[pinOfLit[*it]];
+        // A value of the bit seen in a solution conflicts with the variable's other bits, so
+        // the variable is drawn again; another may be excluded, so its pin is dropped
+        const size_t k = &pin - pins.data();
+        if (records[k].m_kept[pin.m_target] && draws[pin.m_var] < PIN_DRAWS) {
+            ++draws[pin.m_var];
+            drawVar(pin.m_var);
+        } else {
+            pin.m_dropped = true;
+        }
     }
     return VlSolverStatus::UNSAT;
 }
@@ -1528,24 +1599,27 @@ void VlRandomizer::solveDiversityXor(VlRNG& rngr, VlSolverSession& sess)
     }
 }
 
-// Re-add softs highest-priority first, dropping incompatible ones.
-void VlRandomizer::relaxSoftConstraints(VlSolverSession& sess) VL_REQUIRES(sess.m_mutex) {
-    if (m_softConstraints.empty()) return;
+// Re-add softs highest-priority first, dropping incompatible ones. Returns whether the
+// assertions as left were last checked satisfiable, so need no check again.
+bool VlRandomizer::relaxSoftConstraints(VlSolverSession& sess) VL_REQUIRES(sess.m_mutex) {
+    if (m_softConstraints.empty()) return false;
     std::iostream& os = sess.os();
     os << "(push 1)\n";
     for (const auto& s : m_softConstraints) os << "(assert (= #b1 " << s << "))\n";
     os << "(check-sat)\n";
     const VlSolverStatus status = sess.readStatus();
-    if (status == VlSolverStatus::SAT || status == VlSolverStatus::FAIL) return;
+    if (status == VlSolverStatus::SAT) return true;
+    if (status == VlSolverStatus::FAIL) return false;
     os << "(pop 1)\n";
     for (auto it = m_softConstraints.rbegin(); it != m_softConstraints.rend(); ++it) {
         os << "(push 1)\n";
         os << "(assert (= #b1 " << *it << "))\n";
         os << "(check-sat)\n";
         const VlSolverStatus probe = sess.readStatus();
-        if (probe == VlSolverStatus::FAIL) return;
+        if (probe == VlSolverStatus::FAIL) return false;
         if (probe != VlSolverStatus::SAT) os << "(pop 1)\n";
     }
+    return false;
 }
 
 // Every complete run of digits in the reply, in order
@@ -1940,11 +2014,11 @@ bool VlRandomizer::solvePhases(VlRNG& rngr, VlSolverSession& sess,
         emitRandcExclusions(os);
 
         // Soft constraints participate in every phase, priority-ordered.
-        relaxSoftConstraints(sess);
+        const bool relaxedSat = relaxSoftConstraints(sess);
 
         // Initial check-sat WITHOUT diversity (guaranteed sat if constraints are consistent)
-        os << "(check-sat)\n";
-        const VlSolverStatus status = sess.readStatus();
+        if (!relaxedSat) os << "(check-sat)\n";
+        const VlSolverStatus status = relaxedSat ? VlSolverStatus::SAT : sess.readStatus();
         if (status != VlSolverStatus::SAT) {
             // Only exhausted randc values are worth a retry; a lost solver is not
             if (status == VlSolverStatus::UNSAT) exhaustedr = !m_randcUsedValues.empty();

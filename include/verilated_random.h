@@ -305,8 +305,9 @@ class VlRandomizer VL_NOT_FINAL {
         result.insert(result.begin(), int(idxWidth / 4) - result.size(), '0');
         return result;
     }
-    // Assert the maximal compatible soft-constraint set onto the open session.
-    void relaxSoftConstraints(VlSolverSession& sess);
+    // Assert the maximal compatible soft-constraint set onto the open session; true if the
+    // assertions as left are known satisfiable
+    bool relaxSoftConstraints(VlSolverSession& sess);
     // Indices of the "__Va<N>" literals named by (get-unsat-assumptions).
     std::vector<int> readUnsatAssumptions(VlSolverSession& sess);
     void reportUnsatSetup(VlSolverSession& sess, const std::vector<std::string>& uniqueExprs);
