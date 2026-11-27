@@ -2130,6 +2130,28 @@ class ParamProcessor final {
         }
     }
 
+    // Pins in the order of their parameters' declarations, as the specialization is named in
+    // pin order, which must not depend on the order named parameters are given in
+    static std::vector<AstPin*> pinsInDeclOrder(const AstNodeModule* srcModp, AstPin* paramsp) {
+        std::unordered_map<const AstNode*, size_t> declIndex;
+        for (const AstNode* stmtp = srcModp->stmtsp(); stmtp; stmtp = stmtp->nextp()) {
+            declIndex.emplace(stmtp, declIndex.size());
+        }
+        const auto indexOf = [&](const AstPin* pinp) {
+            const AstNode* const declp = pinp->modPTypep()
+                                             ? static_cast<const AstNode*>(pinp->modPTypep())
+                                             : pinp->modVarp();
+            const auto it = declIndex.find(declp);
+            return it == declIndex.end() ? declIndex.size() : it->second;
+        };
+        std::vector<AstPin*> pins;
+        for (AstPin* const pinp : VNList<AstPin>{paramsp}) pins.push_back(pinp);
+        std::stable_sort(pins.begin(), pins.end(), [&](const AstPin* ap, const AstPin* bp) {
+            return indexOf(ap) < indexOf(bp);
+        });
+        return pins;
+    }
+
     AstNodeModule* nodeDeparamCommon(AstNode* nodep, AstNodeModule* srcModp, AstPin* paramsp,
                                      AstPin* pinsp, bool any_overrides) {
         // Returns new or reused module
@@ -2163,7 +2185,7 @@ class ParamProcessor final {
                     V3Const::constifyParamsEdit(pinp);
                 }
             }
-            for (AstPin* const pinp : VNList<AstPin>{paramsp}) {
+            for (AstPin* const pinp : pinsInDeclOrder(srcModp, paramsp)) {
                 if (AstParamTypeDType* const modptp = pinp->modPTypep()) {
                     if (!overridingTypePins.count(pinp)) continue;
                     AstNodeDType* const typep = VN_AS(pinp->exprp(), NodeDType);
