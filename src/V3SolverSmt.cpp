@@ -3925,6 +3925,8 @@ class SolverSmtLowering final : public V3SolverLowering {
             }
 
             AstConstraintExpr* const membershipp = buildDistMembership(distp, buckets);
+            // A soft dist, as of a default other constraints may override, is soft throughout
+            membershipp->isSoft(constrExprp->isSoft());
 
             // Build totalWeight expression: w[0] + w[1] + ... + w[N-1]
             AstNodeExpr* totalWeightExprp = nullptr;
