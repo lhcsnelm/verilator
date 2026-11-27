@@ -391,6 +391,44 @@ class ConstraintExprVisitor final : public VNVisitor {
         return VN_IS(nodep, StructSel) || VN_IS(nodep, DynArraySel) || VN_IS(nodep, QueueSel)
                || VN_IS(nodep, CMethodHard);
     }
+    static bool isReduction(const AstCMethodHard* nodep) {
+        return nodep->method() == VCMethod::ARRAY_R_SUM
+               || nodep->method() == VCMethod::ARRAY_R_PRODUCT
+               || nodep->method() == VCMethod::ARRAY_R_AND
+               || nodep->method() == VCMethod::ARRAY_R_OR
+               || nodep->method() == VCMethod::ARRAY_R_XOR;
+    }
+    // A reduction is expanded over the array's current elements, so holds only where the
+    // solved size is the current one: a condition true once the array is resized to it, and
+    // false where sizes are solved, which the reduction must not constrain
+    static AstNodeExpr* newCurrentSizeCondp(AstNodeExpr* const exprp) {
+        AstNodeExpr* condp = nullptr;
+        std::set<const AstVar*> arrays;
+        exprp->foreach([&](AstCMethodHard* const methodp) {
+            if (!isReduction(methodp)) return;
+            AstVarRef* const refp = VN_CAST(methodp->fromp(), VarRef);
+            if (!refp || !refp->user1()) return;
+            AstVar* const sizeVarp = VN_CAST(refp->varp()->user4p(), Var);
+            if (!sizeVarp || !arrays.insert(refp->varp()).second) return;
+            FileLine* const fl = methodp->fileline();
+            AstCMethodHard* const currentp
+                = new AstCMethodHard{fl, refp->cloneTree(false), VCMethod::DYN_SIZE};
+            currentp->dtypeFrom(sizeVarp);
+            AstVarRef* const sizeRefp
+                = new AstVarRef{fl, VN_AS(sizeVarp->user2p(), NodeModule), sizeVarp,
+                                VAccess::READ};
+            sizeRefp->user1(true);
+            AstEq* const eqp = new AstEq{fl, currentp, sizeRefp};
+            eqp->user1(true);
+            if (condp) {
+                condp = new AstLogAnd{fl, condp, eqp};
+                condp->user1(true);
+            } else {
+                condp = eqp;
+            }
+        });
+        return condp;
+    }
 
     static std::string extractSolveBeforeBaseName(const AstNodeExpr* exprp) {
         while (const AstNodeExpr* const fromp = getFromp(exprp)) exprp = fromp;
@@ -2553,6 +2591,12 @@ class ConstraintExprVisitor final : public VNVisitor {
                 nodep->exprp(neqp);
             }
         }
+        if (AstNodeExpr* const condp = newCurrentSizeCondp(nodep->exprp())) {
+            AstLogIf* const ifp = new AstLogIf{condp->fileline(), condp,
+                                               nodep->exprp()->unlinkFrBack()};
+            ifp->user1(true);
+            nodep->exprp(ifp);
+        }
         iterateChildren(nodep);
         if (m_wantSingle) {
             nodep->replaceWith(nodep->exprp()->unlinkFrBack());
@@ -2646,10 +2690,7 @@ class ConstraintExprVisitor final : public VNVisitor {
         }
 
         // Array reduction methods (sum, product, and, or, xor)
-        if (nodep->method() == VCMethod::ARRAY_R_SUM
-            || nodep->method() == VCMethod::ARRAY_R_PRODUCT
-            || nodep->method() == VCMethod::ARRAY_R_AND || nodep->method() == VCMethod::ARRAY_R_OR
-            || nodep->method() == VCMethod::ARRAY_R_XOR) {
+        if (isReduction(nodep)) {
 
             AstWith* const withp = nodep->withp();
 
