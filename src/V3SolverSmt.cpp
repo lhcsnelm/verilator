@@ -419,9 +419,8 @@ class ConstraintExprVisitor final : public VNVisitor {
             AstCMethodHard* const currentp
                 = new AstCMethodHard{fl, refp->cloneTree(false), VCMethod::DYN_SIZE};
             currentp->dtypeFrom(sizeVarp);
-            AstVarRef* const sizeRefp
-                = new AstVarRef{fl, VN_AS(sizeVarp->user2p(), NodeModule), sizeVarp,
-                                VAccess::READ};
+            AstVarRef* const sizeRefp = new AstVarRef{fl, VN_AS(sizeVarp->user2p(), NodeModule),
+                                                      sizeVarp, VAccess::READ};
             sizeRefp->user1(true);
             AstEq* const eqp = new AstEq{fl, currentp, sizeRefp};
             eqp->user1(true);
@@ -1440,8 +1439,8 @@ class ConstraintExprVisitor final : public VNVisitor {
         // or a selected part is registered in each class using it, as its randomize()
         // holds the registration; a plain class-level variable keys on user3(). Inline
         // 'with' dedups per function (own solver).
-        const bool perClass = isGlobalConstrained || memberRefp || structSelOrCMeth
-                              || foreignStatic;
+        const bool perClass
+            = isGlobalConstrained || memberRefp || structSelOrCMeth || foreignStatic;
         const bool alreadyWritten = m_inlineInitBlockp ? m_inlineWrittenVars.count(smtName) > 0
                                     : perClass         ? m_writtenVars.count(smtName) > 0
                                                        : varp->user3();
@@ -2629,8 +2628,8 @@ class ConstraintExprVisitor final : public VNVisitor {
             }
         }
         if (AstNodeExpr* const condp = newCurrentSizeCondp(nodep->exprp())) {
-            AstLogIf* const ifp = new AstLogIf{condp->fileline(), condp,
-                                               nodep->exprp()->unlinkFrBack()};
+            AstLogIf* const ifp
+                = new AstLogIf{condp->fileline(), condp, nodep->exprp()->unlinkFrBack()};
             ifp->user1(true);
             nodep->exprp(ifp);
         }
@@ -4771,9 +4770,9 @@ public:
             FileLine* const fl = methodp->fileline();
             AstVar* const arrVarp = VN_AS(methodp->fromp(), VarRef)->varp();
             if (!arrVarp->user4p()) {
-                AstVar* const sizeVarp = new AstVar{fl, VVarType::BLOCKTEMP,
-                                                    SmtUtil::sizeVarName(arrVarp),
-                                                    methodp->findIntDType()};
+                AstVar* const sizeVarp
+                    = new AstVar{fl, VVarType::BLOCKTEMP, SmtUtil::sizeVarName(arrVarp),
+                                 methodp->findIntDType()};
                 sizeVarp->funcLocal(true);
                 sizeVarp->setStdRandomizeArg();
                 randomizeFuncp->addDeclsp(sizeVarp);
@@ -4795,9 +4794,9 @@ public:
         AstBegin* const setupBlockp = new AstBegin{fl, "__Vsetup_constraints", holderp, true};
         randomizeFuncp->addStmtsp(setupBlockp);
         expandUniqueElementList(holderp->declsp());
-        ConstraintExprVisitor{
-            nullptr, m_memberMap,   holderp->declsp(),     setupBlockp,   stdrandp,
-            nullptr, m_writtenVars, &m_uniqueConstraintId, m_uniqueNames, nullptr};
+        ConstraintExprVisitor{nullptr,       m_memberMap, holderp->declsp(), setupBlockp,
+                              stdrandp,      nullptr,     m_writtenVars,     &m_uniqueConstraintId,
+                              m_uniqueNames, nullptr};
         SmtUtil::replaceWithLowered(holderp);
     }
     // Solve the sizes, resize the arrays to them, then solve again for the elements with the
@@ -4806,12 +4805,12 @@ public:
                                      const std::vector<AstVar*>& arrays, AstBegin* const holderp,
                                      AstVar* const stdrandp) {
         FileLine* const fl = holderp->fileline();
-        AstVar* const sizeOkVarp = new AstVar{
-            fl, VVarType::BLOCKTEMP, "__Vsize_ok", randomizeFuncp->findBasicDType(VBasicDTypeKwd::BIT)};
+        AstVar* const sizeOkVarp = new AstVar{fl, VVarType::BLOCKTEMP, "__Vsize_ok",
+                                              randomizeFuncp->findBasicDType(VBasicDTypeKwd::BIT)};
         sizeOkVarp->funcLocal(true);
         randomizeFuncp->addDeclsp(sizeOkVarp);
-        randomizeFuncp->addStmtsp(new AstAssign{
-            fl, new AstVarRef{fl, sizeOkVarp, VAccess::WRITE}, newStdSolverCallp(stdrandp)});
+        randomizeFuncp->addStmtsp(new AstAssign{fl, new AstVarRef{fl, sizeOkVarp, VAccess::WRITE},
+                                                newStdSolverCallp(stdrandp)});
         AstNodeStmt* resizesp = nullptr;
         for (AstVar* const arrVarp : arrays) {
             AstCMethodHard* const resizep = new AstCMethodHard{
@@ -4837,9 +4836,9 @@ public:
                 = new AstCExpr{fl, AstCExpr::Pure{}, "\"" + arrVarp->name() + "\""};
             namep->dtypeSetUInt32();
             writep->addPinsp(namep);
-            writep->addPinsp(new AstConst{
-                fl, AstConst::Unsized64{},
-                static_cast<uint64_t>(arrVarp->dtypep()->dimensions(false).second)});
+            writep->addPinsp(
+                new AstConst{fl, AstConst::Unsized64{},
+                             static_cast<uint64_t>(arrVarp->dtypep()->dimensions(false).second)});
             randomizeFuncp->addStmtsp(writep->makeStmt());
         }
         addStdRandomizeSetup(randomizeFuncp, holderp, stdrandp);
@@ -4862,7 +4861,8 @@ public:
         // Clear old constraints and variables for std::randomize with clause
         randomizeFuncp->addStmtsp(
             implementConstraintsClearAll(randomizeFuncp->fileline(), stdrandp));
-        const std::vector<AstVar*> arrays = replaceStdRandomizeSizes(randomizeFuncp, capturedTreep);
+        const std::vector<AstVar*> arrays
+            = replaceStdRandomizeSizes(randomizeFuncp, capturedTreep);
         AstBegin* const holderp = SmtUtil::newItemsHolderp(fl, capturedTreep);
         lowerDistConstraints(randomizeFuncp, VN_AS(holderp->declsp(), NodeConstraintItem),
                              nullptr);
