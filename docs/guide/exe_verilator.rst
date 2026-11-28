@@ -302,7 +302,9 @@ Summary:
 .. option:: --converge-limit <loops>
 
    Rarely needed. Specifies the maximum number of runtime iterations before
-   creating a model failed to converge error. Defaults to 10000.
+   creating a model failed to converge error. Defaults to 10000. Resuming
+   processes delayed by ``#0`` is not limited, as a process may do so any number
+   of times in a time step.
 
 .. option:: --coverage
 

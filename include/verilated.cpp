@@ -4305,9 +4305,9 @@ void VerilatedEvalLoop::evalImpl() {
             do {
                 checkConvergence(++nbaIterCount, "NBA", &VerilatedModel::dumpTriggersNba);
                 if VL_CONSTEXPR_CXX17 (Profiling) m_profilerp->sectionPush("loop inact");
-                uint32_t inactIterCount = 0;
+                // Not limited, as a process may delay by #0 any number of times in a time step
+                // (IEEE 1800-2023 4.4.2.2), as UVM sequencers do per item granted
                 do {
-                    checkConvergence(++inactIterCount, "Inactive");
                     if VL_CONSTEXPR_CXX17 (Profiling) m_profilerp->sectionPush("loop act");
                     uint32_t actIterCount = 0;
                     do {
