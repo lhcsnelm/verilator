@@ -4802,6 +4802,8 @@ class WidthVisitor final : public VNVisitor {
         // A '$' range bound is the least or greatest value of the type (IEEE 1800-2023 18.5.4)
         if (nodep->exprp()->dtypep()->skipRefp()->isIntegralOrPacked()) {
             for (AstDistItem* const itemp : nodep->itemspList()) {
+                AstNodeExpr* rangep = itemp->rangep();
+                insideFillToExpr(nodep->exprp(), rangep /*ref*/);
                 AstInsideRange* const irangep = VN_CAST(itemp->rangep(), InsideRange);
                 if (!irangep) continue;
                 for (AstNodeExpr* const boundp : {irangep->lhsp(), irangep->rhsp()}) {
@@ -4902,6 +4904,12 @@ class WidthVisitor final : public VNVisitor {
             VL_DO_DANGLING(userIterate(itemp, WidthVP{CONTEXT_DET, PRELIM}.p()), itemp);
         }
 
+        if (nodep->exprp()->dtypep()->skipRefp()->isIntegralOrPacked()) {
+            for (AstNodeExpr* itemp = nodep->itemsp(); itemp;
+                 itemp = VN_AS(itemp->nextp(), NodeExpr)) {
+                insideFillToExpr(nodep->exprp(), itemp /*ref*/);
+            }
+        }
         AstBasicDType* dtypep = VN_CAST(nodep->exprp()->dtypep(), BasicDType);
         AstNodeDType* expDTypep = nullptr;
 
@@ -4980,6 +4988,18 @@ class WidthVisitor final : public VNVisitor {
         UINFOTREE(9, newp, "", "inside-out");
         nodep->replaceWith(newp);
         VL_DO_DANGLING(pushDeletep(nodep), nodep);
+    }
+    void insideFillToExpr(const AstNodeExpr* exprp, AstNodeExpr*& itemp) {
+        // Each item is compared to the value by ==, so an unsized '0/'1/'x/'z item or bound
+        // takes the value's width, not the widest item's (IEEE 1800-2023 11.4.13)
+        if (AstInsideRange* const rangep = VN_CAST(itemp, InsideRange)) {
+            AstNodeExpr* boundp = rangep->lhsp();
+            fixAutoExtend(boundp /*ref*/, exprp->width());
+            boundp = rangep->rhsp();
+            fixAutoExtend(boundp /*ref*/, exprp->width());
+        } else {
+            fixAutoExtend(itemp /*ref*/, exprp->width());
+        }
     }
     AstNodeExpr* insideItem(AstNode* nodep, AstNodeExpr* exprp, AstNodeExpr* itemp) {
         const AstNodeDType* const itemDtp = itemp->dtypep()->skipRefp();
